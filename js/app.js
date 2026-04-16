@@ -108,6 +108,7 @@ function buildTotalStats() {
   document.getElementById('ov-neg').textContent = allCases.filter(c => c.type === 'negative').length;
 }
 
+
 function renderOverview() {
   const main = document.getElementById('main-content');
   main.innerHTML = `
@@ -200,9 +201,9 @@ function renderFeature(feature) {
       <div class="filter-label">Type</div>
       <div class="filter-group" id="type-filters">
         <button class="filter-btn active" onclick="setTypeFilter('all',this,'active')">All types</button>
-        <button class="filter-btn" onclick="setTypeFilter('positive',this,'active-green')">✓ Positive</button>
-        <button class="filter-btn" onclick="setTypeFilter('edge',this,'active-amber')">~ Edge case</button>
-        <button class="filter-btn" onclick="setTypeFilter('negative',this,'active-red')">✗ Negative</button>
+        <button class="filter-btn" onclick="setTypeFilter('positive',this,'active-green')">Positive</button>
+        <button class="filter-btn" onclick="setTypeFilter('edge',this,'active-amber')">Edge case</button>
+        <button class="filter-btn" onclick="setTypeFilter('negative',this,'active-red')">Negative</button>
       </div>
     </div>
 
@@ -296,7 +297,7 @@ function renderTable(list, feature) {
   tbody.innerHTML = list.map(c => {
     const sc = feature.meta.screens[c.screen];
     const typePill = `<span class="type-pill tp-${c.type}">${
-      c.type === 'positive' ? '✓ Positive' : c.type === 'edge' ? '~ Edge' : '✗ Negative'
+      c.type === 'positive' ? 'Positive' : c.type === 'edge' ? 'Edge' : 'Negative'
     }</span>`;
     const screenTag = sc
       ? `<span class="screen-tag ${sc.cssClass}">${sc.label}<br><small style="font-weight:400;opacity:0.75;">${sc.name}</small></span>`
@@ -316,7 +317,7 @@ function renderTable(list, feature) {
       <td colspan="4" style="padding:0 0 8px 0;">
         <div class="detail-inner">
           <div>
-            <div class="detail-section-title">Steps to reproduce</div>
+            <div class="detail-section-title">Steps</div>
             <ol class="detail-list steps-list">
               ${c.steps.map((s,i) => `<li><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);margin-right:6px;">${i+1}.</strong>${s}</li>`).join('')}
             </ol>
