@@ -11,7 +11,6 @@
 </head>
 <body>
 
-<!-- ── HEADER ── -->
 <header class="site-header">
   <div class="header-inner">
     <div class="header-left">
@@ -19,53 +18,21 @@
       <span class="site-title">QA Test Cases</span>
       <span class="site-subtitle">/ Mobile App</span>
     </div>
-    <div class="header-badges">
-      <span class="badge badge-green" id="hdr-feature-count">— features</span>
-      <span class="badge badge-blue" id="hdr-case-count">— cases</span>
+    <div class="header-right">
+      <div class="header-status-strip" id="hdr-status-strip">
+        <!-- filled by JS -->
+      </div>
+      <button class="btn-reset" onclick="resetAllStatus()" title="Reset all statuses">↺ Reset</button>
     </div>
   </div>
 </header>
 
-<!-- ── NAV TABS ── -->
 <nav class="nav-tabs-wrap">
-  <div class="nav-tabs" id="nav-tabs">
-    <!-- built by JS -->
-  </div>
+  <div class="nav-tabs" id="nav-tabs"></div>
 </nav>
 
-<!-- ── OVERVIEW STATS BAR ── -->
-<div style="background:var(--surface);border-bottom:1px solid var(--border);padding:10px 2rem;" id="overview-stats-bar">
-  <div style="max-width:1280px;margin:0 auto;">
-    <div class="overview-total-stats">
-      <div class="stat-card" style="padding:10px 16px;">
-        <div class="num num-blue" style="font-size:22px;" id="ov-total">—</div>
-        <div class="lbl">Total cases</div>
-      </div>
-      <div class="stat-card" style="padding:10px 16px;">
-        <div class="num" style="font-size:22px;color:var(--purple);" id="ov-features">—</div>
-        <div class="lbl">Features</div>
-      </div>
-      <div class="stat-card" style="padding:10px 16px;">
-        <div class="num num-green" style="font-size:22px;" id="ov-pos">—</div>
-        <div class="lbl">Positive</div>
-      </div>
-      <div class="stat-card" style="padding:10px 16px;">
-        <div class="num num-amber" style="font-size:22px;" id="ov-edge">—</div>
-        <div class="lbl">Edge case</div>
-      </div>
-      <div class="stat-card" style="padding:10px 16px;">
-        <div class="num num-red" style="font-size:22px;" id="ov-neg">—</div>
-        <div class="lbl">Negative</div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ── MAIN CONTENT ── -->
 <main class="main">
-  <div id="main-content">
-    <!-- Overview or Feature view rendered by JS -->
-  </div>
+  <div id="main-content"></div>
 </main>
 
 <footer class="site-footer">
@@ -73,19 +40,13 @@
   <span id="footer-year"></span>
 </footer>
 
-<!-- ── DATA FILES — add new features here ── -->
 <script src="data/xray-planogram.js"></script>
 <script src="data/auth.js"></script>
 <!-- 👉 <script src="data/my-new-feature.js"></script> -->
 
-<!-- ── APP ── -->
 <script src="js/app.js"></script>
 <script>
-  // Update header counts after init
   document.addEventListener('DOMContentLoaded', () => {
-    const allCases = FEATURES.reduce((s,f) => s + f.cases.length, 0);
-    document.getElementById('hdr-feature-count').textContent = FEATURES.length + ' features';
-    document.getElementById('hdr-case-count').textContent    = allCases + ' cases';
     document.getElementById('footer-year').textContent = new Date().getFullYear();
   });
 </script>
