@@ -1,13 +1,163 @@
 // ── QA TEST CASES — MAIN APP v5 ──
 // Auth: Supabase (email/password)
-// Data: Google Drive (appDataFolder) → qa-testcases-data.json
+// Data: Shared Google Drive via Supabase Edge Function
 
 // ══════════════════════════════════════════
 //  🔧 CONFIG — แก้ค่าเหล่านี้ก่อนใช้งาน
 // ══════════════════════════════════════════
 const SUPABASE_URL      = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MTYxMDQsImV4cCI6MjA5MTk5MjEwNH0.pgkW0qdi4EDz5h5lju_eoNY7oWIvw6fpvTBzO7YQB_E';
-const GOOGLE_CLIENT_ID  = '403194325485-pqib1qjnqjbqlj9ftki70s2d4jpoui20.apps.googleusercontent.com'; 
+const DRIVE_PROXY_URL   = `${SUPABASE_URL}/functions/v1/drive-proxy`;
+const DEBUG_LOG_LIMIT   = 25;
+
+function createDefaultDb() {
+  return { version:1, status:{}, customFeatures:[], customCases:{}, deletedCases:[] };
+}
+
+const DEBUG_STATE = {
+  startedAt: new Date().toISOString(),
+  lastError: null,
+  lastResponse: null,
+  logs: [],
+};
+
+function maskToken(token) {
+  if (!token) return '(missing)';
+  if (token.length <= 18) return `${token.slice(0, 6)}...(${token.length})`;
+  return `${token.slice(0, 10)}...${token.slice(-6)} (len ${token.length})`;
+}
+
+function decodeJwtMeta(token) {
+  if (!token || token.split('.').length < 2) return null;
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), '=');
+    const json = decodeURIComponent(atob(padded).split('').map(c => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join(''));
+    const payload = JSON.parse(json);
+    return {
+      sub: payload.sub || null,
+      email: payload.email || null,
+      role: payload.role || null,
+      exp: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeDebugData(value) {
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      status: value.status,
+      code: value.code,
+      errorCode: value.errorCode,
+      requestId: value.requestId,
+      region: value.region,
+      stage: value.stage,
+      ok: value.ok,
+      payload: sanitizeDebugData(value.payload),
+      details: value.details,
+    };
+  }
+  if (Array.isArray(value)) return value.map(sanitizeDebugData);
+  if (!value || typeof value !== 'object') return value;
+
+  const out = {};
+  Object.entries(value).forEach(([key, val]) => {
+    if (typeof val === 'string' && key.toLowerCase().includes('token')) {
+      out[key] = maskToken(val);
+    } else {
+      out[key] = sanitizeDebugData(val);
+    }
+  });
+  return out;
+}
+
+function recordDebug(event, data = {}) {
+  DEBUG_STATE.logs.unshift({
+    at: new Date().toISOString(),
+    event,
+    data: sanitizeDebugData(data),
+  });
+  DEBUG_STATE.logs = DEBUG_STATE.logs.slice(0, DEBUG_LOG_LIMIT);
+  renderDebugOutputs();
+}
+
+function buildError(message, meta = {}) {
+  const err = new Error(message);
+  Object.assign(err, meta);
+  return err;
+}
+
+function getSessionDebugInfo() {
+  const accessToken = localStorage.getItem('qa_access_token');
+  const refreshToken = localStorage.getItem('qa_refresh_token');
+  return {
+    location: window.location.href,
+    origin: window.location.origin,
+    hasAccessToken: !!accessToken,
+    accessToken: maskToken(accessToken),
+    accessTokenMeta: decodeJwtMeta(accessToken),
+    hasRefreshToken: !!refreshToken,
+    refreshToken: maskToken(refreshToken),
+    refreshTokenMeta: decodeJwtMeta(refreshToken),
+  };
+}
+
+function getDebugReport() {
+  return {
+    generatedAt: new Date().toISOString(),
+    startedAt: DEBUG_STATE.startedAt,
+    driveProxyUrl: DRIVE_PROXY_URL,
+    syncStatusText: document.getElementById('drive-sync-status')?.textContent || null,
+    browser: {
+      online: navigator.onLine,
+      userAgent: navigator.userAgent,
+      language: navigator.language,
+      secureContext: window.isSecureContext,
+    },
+    session: getSessionDebugInfo(),
+    lastResponse: DEBUG_STATE.lastResponse,
+    lastError: DEBUG_STATE.lastError,
+    logs: DEBUG_STATE.logs,
+  };
+}
+
+function formatDebugReport() {
+  return JSON.stringify(getDebugReport(), null, 2);
+}
+
+function escapeHtml(str = '') {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderDebugOutputs() {
+  const text = formatDebugReport();
+  ['drive-debug-output', 'db-debug-output'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  });
+}
+
+async function copyDebugReport() {
+  const text = formatDebugReport();
+  try {
+    await navigator.clipboard.writeText(text);
+    recordDebug('debug-copy-success');
+  } catch (err) {
+    recordDebug('debug-copy-failed', { message: err?.message || String(err) });
+    alert('คัดลอก debug report ไม่สำเร็จ');
+  }
+}
+
+window.copyDebugReport = copyDebugReport;
 
 // ══════════════════════════════════════════
 //  SUPABASE AUTH
@@ -19,6 +169,7 @@ async function handleLogin() {
   const btn      = document.getElementById('btn-login');
   errEl.style.display = 'none';
   if (!email || !password) { errEl.textContent = 'กรุณากรอก Email และ Password'; errEl.style.display = 'block'; return; }
+  recordDebug('login-start', { email, hasPassword: !!password });
   btn.textContent = 'กำลังเข้าสู่ระบบ...'; btn.disabled = true;
   try {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -29,8 +180,21 @@ async function handleLogin() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
     localStorage.setItem('qa_access_token', d.access_token);
-    showDriveStep();
+    if (d.refresh_token) localStorage.setItem('qa_refresh_token', d.refresh_token);
+    recordDebug('login-success', {
+      userId: d.user?.id || null,
+      accessTokenMeta: decodeJwtMeta(d.access_token),
+      refreshTokenMeta: decodeJwtMeta(d.refresh_token),
+     });
+    showDriveStep('กำลังเชื่อมข้อมูลจาก Google Drive กลาง...');
+    await loadDriveData();
+    if (document.getElementById('login-overlay').style.display !== 'none') {
+      btn.textContent = 'เข้าสู่ระบบ';
+      btn.disabled = false;
+    }
   } catch (err) {
+    DEBUG_STATE.lastError = sanitizeDebugData(err);
+    recordDebug('login-failed', err);
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
     errEl.style.display = 'block';
     btn.textContent = 'เข้าสู่ระบบ'; btn.disabled = false;
@@ -38,133 +202,292 @@ async function handleLogin() {
 }
 
 function handleLogout() {
+  recordDebug('logout');
   localStorage.removeItem('qa_access_token');
-  sessionStorage.removeItem('qa_google_token');
-  gAccessToken = null; gDriveFileId = null; DB_READY = false;
+  localStorage.removeItem('qa_refresh_token');
+  clearTimeout(gWriteTimer);
+  DB_READY = false;
   location.reload();
 }
 
-function showDriveStep() {
+function showLoginStep(message = '') {
+  const errEl = document.getElementById('login-error');
+  const btn   = document.getElementById('btn-login');
+  document.getElementById('step-login').style.display = 'block';
+  document.getElementById('step-drive').style.display = 'none';
+  document.getElementById('login-overlay').style.display = 'flex';
+  btn.textContent = 'เข้าสู่ระบบ';
+  btn.disabled = false;
+  if (message) {
+    errEl.textContent = message;
+    errEl.style.display = 'block';
+  } else {
+    errEl.textContent = '';
+    errEl.style.display = 'none';
+  }
+  recordDebug('show-login-step', { message });
+}
+
+function showDriveStep(message = 'กำลังเชื่อมข้อมูลจาก Google Drive กลาง...') {
+  document.getElementById('login-error').style.display = 'none';
   document.getElementById('step-login').style.display = 'none';
   document.getElementById('step-drive').style.display = 'block';
+  document.getElementById('drive-sync-status').textContent = message;
+  recordDebug('show-drive-step', { message });
+  renderDebugOutputs();
 }
 
 // ══════════════════════════════════════════
-//  GOOGLE DRIVE CLIENT
+//  SHARED GOOGLE DRIVE PROXY
 // ══════════════════════════════════════════
-const DRIVE_API      = 'https://www.googleapis.com/drive/v3';
-const DRIVE_UPLOAD   = 'https://www.googleapis.com/upload/drive/v3';
-const DRIVE_SCOPE    = 'https://www.googleapis.com/auth/drive.appdata';
-const DRIVE_FILENAME = 'qa-testcases-data.json';
-
-let gAccessToken = null;
-let gTokenClient = null;
-let gDriveFileId = null;
 let gWriteTimer  = null;
 
-// Called by GIS script onload
-function onGISLoad() {
-  if (typeof google === 'undefined') return;
-  gTokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: DRIVE_SCOPE,
-    callback: async (resp) => {
-      const btn = document.getElementById('btn-connect-drive');
-      if (resp.error) {
-        const errEl = document.getElementById('drive-connect-error');
-        if (errEl) { errEl.textContent = `Google error: ${resp.error}`; errEl.style.display = 'block'; }
-        if (btn) { btn.disabled = false; btn.textContent = 'เชื่อมต่อ Google Drive'; }
-        // Show reconnect banner if was already connected
-        hideDriveExpiredBanner();
-        document.getElementById('drive-expired-banner').style.display = 'flex';
-        return;
-      }
-      gAccessToken = resp.access_token;
-      sessionStorage.setItem('qa_google_token', resp.access_token);
-      if (btn) { btn.disabled = false; }
-      await loadDriveData();
-    },
-  });
-
-  // Auto-try from session if already Supabase-authed
-  const supToken = localStorage.getItem('qa_access_token');
-  const gToken   = sessionStorage.getItem('qa_google_token');
-  if (supToken && gToken) {
-    gAccessToken = gToken;
-    document.getElementById('login-overlay').style.display = 'none';
-    loadDriveData();
-  } else if (supToken) {
-    // Supabase ok but no Drive token → show Drive connect step
-    document.getElementById('login-overlay').style.display = 'flex';
-    showDriveStep();
-  }
-  // else: show login overlay (default)
+function getSupabaseToken() {
+  return localStorage.getItem('qa_access_token');
 }
 
-function requestGoogleToken() {
-  if (!gTokenClient) { alert('Google Identity Services ยังโหลดไม่เสร็จ กรุณารอสักครู่แล้วลองใหม่'); return; }
-  const btn = document.getElementById('btn-connect-drive');
-  if (btn) { btn.disabled = true; btn.textContent = 'กำลังเชื่อมต่อ...'; }
-  gTokenClient.requestAccessToken({ prompt: '' });
+function isAuthErrorMessage(message = '') {
+  return [
+    'UNAUTHORIZED',
+    'Unauthorized',
+    'Invalid JWT',
+    'JWT',
+    'token',
+    'session',
+  ].some(keyword => message.includes(keyword));
+}
+
+async function refreshSupabaseSession() {
+  const refreshToken = localStorage.getItem('qa_refresh_token');
+  if (!refreshToken) return null;
+
+  recordDebug('refresh-session-start');
+  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  const d = await r.json();
+
+  if (!r.ok || !d.access_token) {
+    recordDebug('refresh-session-failed', { status: r.status, payload: d });
+    localStorage.removeItem('qa_access_token');
+    localStorage.removeItem('qa_refresh_token');
+    return null;
+  }
+
+  localStorage.setItem('qa_access_token', d.access_token);
+  if (d.refresh_token) localStorage.setItem('qa_refresh_token', d.refresh_token);
+  recordDebug('refresh-session-success', { accessTokenMeta: decodeJwtMeta(d.access_token) });
+  return d.access_token;
+}
+
+async function driveRequest(method = 'GET', body, allowRetry = true) {
+  const token = getSupabaseToken();
+  if (!token) throw new Error('UNAUTHORIZED');
+
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    apikey: SUPABASE_ANON_KEY,
+  };
+  const opts = { method, headers };
+
+  if (typeof body !== 'undefined') {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+
+  recordDebug('drive-request-start', {
+    method,
+    allowRetry,
+    hasBody: typeof body !== 'undefined',
+    session: getSessionDebugInfo(),
+  });
+
+  let r;
+  try {
+    r = await fetch(DRIVE_PROXY_URL, opts);
+  } catch (err) {
+    const diagnosed = await diagnoseDriveProxyError(err, headers);
+    const wrapped = buildError(diagnosed.message, diagnosed);
+    DEBUG_STATE.lastError = sanitizeDebugData(wrapped);
+    recordDebug('drive-request-network-error', wrapped);
+    throw wrapped;
+  }
+
+  const responseMeta = {
+    method,
+    status: r.status,
+    ok: r.ok,
+    requestId: r.headers.get('sb-request-id'),
+    errorCode: r.headers.get('sb-error-code'),
+    region: r.headers.get('x-sb-edge-region'),
+  };
+  DEBUG_STATE.lastResponse = responseMeta;
+  recordDebug('drive-request-response', responseMeta);
+
+  if (r.status === 401 && allowRetry) {
+    const refreshedToken = await refreshSupabaseSession();
+    if (refreshedToken) return driveRequest(method, body, false);
+  }
+  if (r.status === 401) {
+    const text = await r.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch {}
+    const err = buildError(data?.message || data?.error || 'UNAUTHORIZED', {
+      ...responseMeta,
+      payload: data,
+    });
+    DEBUG_STATE.lastError = sanitizeDebugData(err);
+    recordDebug('drive-request-unauthorized', err);
+    throw err;
+  }
+
+  const text = await r.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!r.ok) {
+    const err = buildError(data?.error || data?.message || `Drive sync failed: ${r.status}`, {
+      ...responseMeta,
+      payload: data,
+    });
+    DEBUG_STATE.lastError = sanitizeDebugData(err);
+    recordDebug('drive-request-failed', err);
+    throw err;
+  }
+
+  DEBUG_STATE.lastError = null;
+  recordDebug('drive-request-success', {
+    ...responseMeta,
+    keys: data && typeof data === 'object' ? Object.keys(data) : null,
+  });
+  return data;
+}
+
+async function diagnoseDriveProxyError(originalError, requestHeaders = {}) {
+  recordDebug('drive-proxy-diagnose-start', {
+    originalMessage: originalError?.message || String(originalError),
+    session: getSessionDebugInfo(),
+  });
+  try {
+    try {
+      const preflight = await fetch(DRIVE_PROXY_URL, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: window.location.origin === 'null' ? 'null' : window.location.origin,
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization,apikey,content-type',
+        },
+      });
+      recordDebug('drive-proxy-diagnose-preflight', {
+        status: preflight.status,
+        ok: preflight.ok,
+      });
+      if (!preflight.ok) {
+        return {
+          message: `CORS preflight ไม่ผ่าน (${preflight.status})`,
+          status: preflight.status,
+          stage: 'preflight',
+        };
+      }
+    } catch (preflightError) {
+      recordDebug('drive-proxy-diagnose-preflight-error', {
+        message: preflightError?.message || String(preflightError),
+      });
+      return {
+        message: `Browser ส่ง OPTIONS ไป Supabase ไม่สำเร็จ: ${preflightError?.message || 'Unknown error'}`,
+        stage: 'preflight-network',
+      };
+    }
+
+    try {
+      const probe = await fetch(DRIVE_PROXY_URL, { method: 'GET', headers: requestHeaders });
+      const text = await probe.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch {}
+      recordDebug('drive-proxy-diagnose-probe', {
+        status: probe.status,
+        ok: probe.ok,
+        requestId: probe.headers.get('sb-request-id'),
+        errorCode: probe.headers.get('sb-error-code'),
+        payload,
+      });
+
+      if (probe.status === 404) {
+        return {
+          message: 'ไม่พบ drive-proxy function บน Supabase (404) กรุณา deploy function ก่อน',
+          status: 404,
+          stage: 'probe',
+          payload,
+        };
+      }
+      if (probe.status === 401) {
+        return {
+          message: payload?.message || payload?.error || 'Supabase session หมดอายุหรือ token ไม่ถูกต้อง',
+          status: 401,
+          stage: 'probe',
+          payload,
+        };
+      }
+      if (!probe.ok) {
+        return {
+          message: payload?.error || payload?.message || `drive-proxy ตอบกลับด้วย status ${probe.status}`,
+          status: probe.status,
+          stage: 'probe',
+          payload,
+        };
+      }
+    } catch (probeError) {
+      recordDebug('drive-proxy-diagnose-probe-error', {
+        message: probeError?.message || String(probeError),
+      });
+    }
+  } catch (_) {
+    // Ignore probe failure and fall back to original message.
+  }
+
+  try {
+    const plain = await fetch(DRIVE_PROXY_URL, { method: 'GET' });
+    recordDebug('drive-proxy-diagnose-plain-get', {
+      status: plain.status,
+      ok: plain.ok,
+      requestId: plain.headers.get('sb-request-id'),
+      errorCode: plain.headers.get('sb-error-code'),
+    });
+  } catch (plainError) {
+    recordDebug('drive-proxy-diagnose-plain-get-error', {
+      message: plainError?.message || String(plainError),
+    });
+    return {
+      message: `Browser ไปไม่ถึง Supabase Functions endpoint เลย: ${plainError?.message || 'Unknown error'}`,
+      stage: 'endpoint-network',
+    };
+  }
+
+  return {
+    message: originalError?.message || 'เชื่อมต่อ drive-proxy ไม่สำเร็จ',
+    stage: 'network',
+  };
 }
 
 // ── DRIVE API HELPERS ──────────────────────
-function driveHeaders(extra = {}) {
-  return { Authorization: `Bearer ${gAccessToken}`, ...extra };
-}
-
-async function driveFindFile() {
-  const r = await fetch(
-    `${DRIVE_API}/files?spaces=appDataFolder&q=name='${DRIVE_FILENAME}'&fields=files(id)`,
-    { headers: driveHeaders() }
-  );
-  if (r.status === 401) throw new Error('UNAUTHORIZED');
-  const d = await r.json();
-  return d.files?.[0]?.id || null;
-}
-
-async function driveCreateFile() {
-  const meta    = { name: DRIVE_FILENAME, parents: ['appDataFolder'] };
-  const empty   = JSON.stringify({ version:1, status:{}, customFeatures:[], customCases:{}, deletedCases:[] });
-  const form    = new FormData();
-  form.append('metadata', new Blob([JSON.stringify(meta)], { type:'application/json' }));
-  form.append('media',    new Blob([empty],                { type:'application/json' }));
-  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`, {
-    method:'POST', headers: driveHeaders(), body: form,
-  });
-  if (!r.ok) throw new Error(`Drive create failed: ${r.status}`);
-  return (await r.json()).id;
-}
-
-async function driveGetOrCreate() {
-  if (gDriveFileId) return gDriveFileId;
-  let id = await driveFindFile();
-  if (!id) id = await driveCreateFile();
-  gDriveFileId = id;
-  return id;
-}
-
 async function driveRead() {
-  const id = await driveGetOrCreate();
-  const r  = await fetch(`${DRIVE_API}/files/${id}?alt=media`, { headers: driveHeaders() });
-  if (r.status === 401) throw new Error('UNAUTHORIZED');
-  if (!r.ok) throw new Error(`Drive read failed: ${r.status}`);
-  return r.json();
+  return driveRequest('GET');
 }
 
 async function driveWrite() {
   try {
-    const id = await driveGetOrCreate();
-    const r  = await fetch(`${DRIVE_UPLOAD}/files/${id}?uploadType=media`, {
-      method:'PATCH',
-      headers: driveHeaders({ 'Content-Type':'application/json' }),
-      body: JSON.stringify(DB),
-    });
-    if (r.status === 401) { onDriveTokenExpired(); return; }
-    if (!r.ok) throw new Error(`Drive write failed: ${r.status}`);
+    await driveRequest('PUT', DB);
     hideSavingIndicator();
   } catch (e) {
     hideSavingIndicator();
+    DEBUG_STATE.lastError = sanitizeDebugData(e);
+    recordDebug('drive-write-error', e);
+    if (isAuthErrorMessage(e?.message)) {
+      localStorage.removeItem('qa_access_token');
+      localStorage.removeItem('qa_refresh_token');
+      showLoginStep('Session หมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+      return;
+    }
     console.error('Drive write error:', e);
   }
 }
@@ -175,21 +498,15 @@ function scheduleWrite() {
   gWriteTimer = setTimeout(driveWrite, 800);
 }
 
-function onDriveTokenExpired() {
-  gAccessToken = null;
-  sessionStorage.removeItem('qa_google_token');
-  document.getElementById('drive-expired-banner').style.display = 'flex';
-  hideSavingIndicator();
-}
-
 // ══════════════════════════════════════════
 //  IN-MEMORY DB
 // ══════════════════════════════════════════
-let DB = { version:1, status:{}, customFeatures:[], customCases:{}, deletedCases:[] };
+let DB = createDefaultDb();
 let DB_READY = false;
 
 async function loadDriveData() {
-  showLoadingOverlay('กำลังโหลดข้อมูลจาก Google Drive...');
+  showLoadingOverlay('กำลังโหลดข้อมูลจาก Shared Google Drive...');
+  recordDebug('drive-load-start');
   try {
     const data = await driveRead();
     DB = {
@@ -202,19 +519,33 @@ async function loadDriveData() {
     DB_READY = true;
     hideLoadingOverlay();
     document.getElementById('login-overlay').style.display = 'none';
-    document.getElementById('drive-expired-banner').style.display = 'none';
     document.getElementById('drive-status-badge').style.display = 'inline-flex';
+    recordDebug('drive-load-success', {
+      version: DB.version,
+      statusCount: Object.keys(DB.status).length,
+      customFeatureCount: DB.customFeatures.length,
+      customCaseFeatureCount: Object.keys(DB.customCases).length,
+    });
     init();
   } catch (err) {
     hideLoadingOverlay();
-    if (err.message === 'UNAUTHORIZED') {
-      onDriveTokenExpired();
-      document.getElementById('login-overlay').style.display = 'flex';
-      showDriveStep();
+    DEBUG_STATE.lastError = sanitizeDebugData(err);
+    recordDebug('drive-load-error', err);
+    if (isAuthErrorMessage(err?.message)) {
+      localStorage.removeItem('qa_access_token');
+      localStorage.removeItem('qa_refresh_token');
+      showLoginStep('Session หมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
     } else {
       showDBError(err);
     }
   }
+}
+
+function bootstrapSession() {
+  if (!getSupabaseToken()) return;
+  recordDebug('bootstrap-session', { session: getSessionDebugInfo() });
+  showDriveStep('กำลังเชื่อมข้อมูลจาก Google Drive กลาง...');
+  loadDriveData();
 }
 
 // ── DB READ HELPERS ─────────────────────
@@ -274,25 +605,32 @@ function showDBError(err) {
   let el = document.getElementById('db-loading');
   if (!el) { el = document.createElement('div'); el.id = 'db-loading'; document.body.appendChild(el); }
   el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;';
+  const msg = err?.message || 'Unknown error';
+  const setupHint = msg.includes('(404)')
+    ? 'ตอนนี้ endpoint ยังไม่เจอ ให้ deploy <code>drive-proxy</code> ไปที่ Supabase ก่อน'
+    : 'กรุณาตรวจสอบ <code>drive-proxy</code> function, <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> และ <code>DRIVE_SHARED_FOLDER_ID</code>';
   el.innerHTML = `
     <div style="font-size:32px;">⚠️</div>
-    <div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Google Drive ไม่ได้</div>
+    <div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Shared Google Drive ไม่ได้</div>
     <div style="font-size:13px;color:#555;max-width:380px;text-align:center;line-height:1.6;">
-      กรุณาตรวจสอบ <code>GOOGLE_CLIENT_ID</code> ใน <code>js/app.js</code><br>
-      และ Authorized JavaScript origins ใน Google Cloud Console<br><br>
-      <em style="color:#888;">${err.message}</em>
+      ${setupHint}<br><br>
+      <em style="color:#888;">${msg}</em>
     </div>
+    <details class="debug-panel debug-panel-overlay" open>
+      <summary>Debug report</summary>
+      <pre id="db-debug-output" class="debug-output"></pre>
+      <button type="button" class="debug-copy-btn" onclick="copyDebugReport()">Copy debug</button>
+    </details>
     <button onclick="location.reload()" style="margin-top:8px;padding:8px 20px;background:#4A3AB0;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">ลองใหม่</button>`;
   el.style.display = 'flex';
+  DEBUG_STATE.lastError = sanitizeDebugData(err);
+  renderDebugOutputs();
 }
 function showSavingIndicator() {
   const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'flex';
 }
 function hideSavingIndicator() {
   const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'none';
-}
-function hideDriveExpiredBanner() {
-  const el = document.getElementById('drive-expired-banner'); if (el) el.style.display = 'none';
 }
 
 // ══════════════════════════════════════════
@@ -778,3 +1116,6 @@ async function resetAllStatus(){
   if(currentFeatureId==='overview')renderOverview();
   else{const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(f)renderFeature(f);}
 }
+
+recordDebug('app-init', { session: getSessionDebugInfo() });
+bootstrapSession();

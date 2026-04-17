@@ -634,16 +634,57 @@ body {
   border-radius:var(--radius-lg); padding:20px;
   text-align:center;
 }
-.btn-gdrive {
-  display:inline-flex; align-items:center; gap:8px;
-  font-family:inherit; font-size:13px; font-weight:500;
-  padding:9px 18px; border-radius:var(--radius);
-  border:1px solid var(--border2); background:var(--surface);
-  cursor:pointer; transition:all 0.15s;
-  color:var(--text);
+.drive-sync-note {
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  font-size:13px; color:var(--text2);
+  background:var(--surface); border:1px solid var(--border2);
+  border-radius:999px; padding:10px 16px;
 }
-.btn-gdrive:hover { background:var(--surface2); box-shadow:var(--shadow); }
-.btn-gdrive:disabled { opacity:0.6; cursor:wait; }
+.debug-panel {
+  margin-top:14px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:var(--surface);
+  text-align:left;
+  overflow:hidden;
+}
+.debug-panel summary {
+  cursor:pointer;
+  list-style:none;
+  padding:10px 12px;
+  font-size:12px;
+  font-weight:600;
+  color:var(--text2);
+  background:var(--surface2);
+}
+.debug-panel summary::-webkit-details-marker { display:none; }
+.debug-panel-overlay {
+  width:min(92vw, 560px);
+  margin-top:4px;
+}
+.debug-output {
+  margin:0;
+  padding:12px;
+  max-height:220px;
+  overflow:auto;
+  background:#fbfaf8;
+  border-top:1px solid var(--border);
+  font:11px/1.5 var(--mono, "IBM Plex Mono", monospace);
+  color:var(--text2);
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+.debug-copy-btn {
+  margin:0 12px 12px;
+  padding:7px 12px;
+  border:none;
+  border-radius:8px;
+  background:var(--surface2);
+  color:var(--text2);
+  font:500 12px/1 inherit;
+  cursor:pointer;
+}
+.debug-copy-btn:hover { box-shadow:var(--shadow); }
 
 /* ── DRIVE STATUS BADGE (header) ── */
 .drive-badge {
@@ -652,20 +693,6 @@ body {
   background:var(--green-bg); color:var(--green);
   border:1px solid var(--green-border);
   display:inline-flex; align-items:center; gap:4px;
-}
-
-/* ── DRIVE EXPIRED BANNER ── */
-.drive-expired-banner {
-  position:fixed; top:56px; left:0; right:0; z-index:80;
-  background:var(--amber-bg); border-bottom:1px solid var(--amber-border);
-  padding:8px 2rem;
-  display:flex; align-items:center; justify-content:center; gap:10px;
-  font-size:13px; color:var(--amber);
-}
-.drive-expired-banner button {
-  font-size:12px; font-weight:500; padding:4px 12px;
-  background:var(--orange); color:#fff;
-  border:none; border-radius:6px; cursor:pointer; font-family:inherit;
 }
 
 /* ── SAVING INDICATOR ── */

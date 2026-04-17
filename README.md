@@ -1,6 +1,6 @@
 # QA Test Cases — Mobile App
 
-A clean, searchable HTML-based test case repository for mobile app features. No build tools required — open `index.html` in any browser or deploy as a static site.
+A clean, searchable HTML-based test case repository for mobile app features. The UI is still a static site, but shared persistence now runs through Supabase Auth + Supabase Edge Function + a single Google Drive folder.
 
 ## 🗂 Project Structure
 
@@ -11,10 +11,14 @@ qa-testcases/
 │   └── style.css           # All styles
 ├── js/
 │   └── app.js              # App logic (nav, filters, rendering)
+├── supabase/
+│   └── functions/
+│       └── drive-proxy/    # Shared Google Drive proxy via service account
 ├── data/
 │   ├── xray-planogram.js   # Feature: X-ray Planogram test cases
 │   ├── auth.js             # Feature: Login & Authentication test cases
 │   └── ...                 # Add more features here
+├── SETUP.md                # Deploy + secrets setup
 └── README.md
 ```
 
@@ -27,6 +31,7 @@ qa-testcases/
 - **Live search** — searches ID, title, steps, and expected behavior
 - **Expandable rows** — click any row to see steps + expected behavior
 - **Responsive** — works on mobile too
+- **Shared persistence** — every logged-in user reads/writes the same Google Drive JSON file
 
 ## ➕ Adding a New Feature
 
@@ -95,11 +100,13 @@ That's it. The feature will appear as a new tab automatically.
 
 ## 🚀 Deployment
 
-This is a pure static site. Deploy anywhere:
+The frontend can still be deployed as a static site, but the app also requires:
 
-- **GitHub Pages** — push to `main`, enable Pages in repo settings
-- **Netlify / Vercel** — drag-and-drop the folder
-- **Local** — open `index.html` directly in a browser
+- Supabase Auth
+- Supabase Edge Function `drive-proxy`
+- Google Drive shared folder + service account secret
+
+See [SETUP.md](/Users/chiinuch/nuchy-testcase/SETUP.md) for the full setup flow.
 
 ## 🛠 Tech Stack
 

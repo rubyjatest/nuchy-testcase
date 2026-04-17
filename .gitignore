@@ -1,0 +1,4 @@
+# Service account secrets
+*.service-account.json
+*-service-account.json
+nuchy-testcase-*.json
