@@ -10,36 +10,90 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 // ══════════════════════════════════════════
 //  Supabase client (ใช้ REST API โดยตรง)
 // ══════════════════════════════════════════
+// ══════════════════════════════════════════
+//  Supabase client (ใช้ REST API + Auth Token)
+// ══════════════════════════════════════════
 const sb = {
+  getHeaders() {
+    const token = localStorage.getItem('qa_access_token');
+    return {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${token || SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+    };
+  },
   async get(table, params = '') {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}${params}`, {
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
-    });
-    if (!r.ok) throw new Error(`GET ${table} failed: ${r.status}`);
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}${params}`, { headers: this.getHeaders() });
+    if (!r.ok) {
+      if (r.status === 401 || r.status === 403) handleLogout(); // Token หมดอายุ
+      throw new Error(`GET ${table} failed: ${r.status}`);
+    }
     return r.json();
   },
   async upsert(table, body) {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
       method: 'POST',
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates,return=minimal',
-      },
+      headers: { ...this.getHeaders(), Prefer: 'resolution=merge-duplicates,return=minimal' },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`UPSERT ${table} failed: ${r.status}`);
+    if (!r.ok) {
+      if (r.status === 401 || r.status === 403) handleLogout();
+      throw new Error(`UPSERT ${table} failed: ${r.status}`);
+    }
   },
   async delete(table, match) {
     const qs = Object.entries(match).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join('&');
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
       method: 'DELETE',
-      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+      headers: this.getHeaders()
     });
-    if (!r.ok) throw new Error(`DELETE ${table} failed: ${r.status}`);
+    if (!r.ok) {
+      if (r.status === 401 || r.status === 403) handleLogout();
+      throw new Error(`DELETE ${table} failed: ${r.status}`);
+    }
   },
 };
+
+// ══════════════════════════════════════════
+//  Authentication
+// ══════════════════════════════════════════
+async function handleLogin() {
+  const email = document.getElementById('auth-email').value;
+  const password = document.getElementById('auth-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('btn-login');
+
+  errEl.style.display = 'none';
+  if (!email || !password) { errEl.textContent = 'กรุณากรอก Email และ Password'; errEl.style.display = 'block'; return; }
+
+  btn.textContent = 'กำลังเข้าสู่ระบบ...'; btn.disabled = true;
+
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error_description || data.msg || 'Login failed');
+
+    // เก็บ Token และซ่อนหน้าต่าง Login
+    localStorage.setItem('qa_access_token', data.access_token);
+    document.getElementById('login-overlay').style.display = 'none';
+    
+    // เริ่มโหลดข้อมูลแอป
+    init();
+  } catch (err) {
+    errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
+    errEl.style.display = 'block';
+    btn.textContent = 'เข้าสู่ระบบ'; btn.disabled = false;
+  }
+}
+
+function handleLogout() {
+  localStorage.removeItem('qa_access_token');
+  location.reload(); // รีเฟรชหน้าเว็บเพื่อให้กลับไปหน้า Login
+}
 
 // ══════════════════════════════════════════
 //  In-memory cache
@@ -624,4 +678,11 @@ async function resetAllStatus() {
   else { const f = FEATURES.find(f => f.meta.id === currentFeatureId); if (f) renderFeature(f); }
 }
 
-document.addEventListener('DOMContentLoaded', init);
+document.addEventListener('DOMContentLoaded', () => {
+  const token = localStorage.getItem('qa_access_token');
+  if (token) {
+    document.getElementById('login-overlay').style.display = 'none';
+    init(); // โหลดข้อมูลเมื่อมี Token แล้ว
+  }
+  // ถ้าไม่มี Token หน้าต่าง Login Overlay จะแสดงผลค้างไว้
+});

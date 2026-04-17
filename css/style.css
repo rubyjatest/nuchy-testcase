@@ -101,6 +101,7 @@ body {
 .site-subtitle { font-size: 12px; color: var(--text3); margin-left: 4px; }
 
 .header-status-strip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
 .hdr-stat {
   display: flex; align-items: center; gap: 4px;
   font-size: 11px; font-weight: 500;
@@ -119,6 +120,8 @@ body {
   white-space: nowrap;
 }
 .btn-reset:hover { background: var(--surface2); color: var(--text); }
+.btn-logout { color: var(--red); border-color: var(--red-border); }
+.btn-logout:hover { background: var(--red-bg); color: var(--red); }
 
 /* ── NAV TABS ── */
 .nav-tabs-wrap {
@@ -479,7 +482,10 @@ body {
   .ov-feature-row { grid-template-columns: auto 1fr; }
   .ov-feature-stats { display: none; }
   .header-status-strip { display: none; }
-  .btn-reset { display: none; }
+  .site-title { font-size: 14px; }
+  .site-subtitle { display: none; }
+  .header-actions { margin-left: auto; }
+  .btn-reset { padding: 5px 10px; }
 }
 
 /* ── ICON BUTTONS ── */
@@ -594,4 +600,20 @@ body {
   --st-failed: var(--red);
   --st-blocked: var(--amber);
   --st-cancelled: var(--purple);
+}
+
+/* ── LOGIN OVERLAY ── */
+.login-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.login-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  width: 100%; max-width: 360px;
+  padding: 32px 24px;
 }
