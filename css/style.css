@@ -617,3 +617,79 @@ body {
   width: 100%; max-width: 360px;
   padding: 32px 24px;
 }
+
+/* ── LOGIN STEP BADGES ── */
+.login-step-badge {
+  font-size:11px; font-weight:500; color:var(--blue);
+  background:var(--blue-bg); border:1px solid var(--blue-border);
+  padding:3px 10px; border-radius:20px; display:inline-block; margin-bottom:16px;
+}
+.login-step-badge-ok {
+  color:var(--green); background:var(--green-bg); border-color:var(--green-border);
+}
+
+/* ── DRIVE CONNECT BOX ── */
+.drive-connect-box {
+  background:var(--surface2); border:1px solid var(--border);
+  border-radius:var(--radius-lg); padding:20px;
+  text-align:center;
+}
+.btn-gdrive {
+  display:inline-flex; align-items:center; gap:8px;
+  font-family:inherit; font-size:13px; font-weight:500;
+  padding:9px 18px; border-radius:var(--radius);
+  border:1px solid var(--border2); background:var(--surface);
+  cursor:pointer; transition:all 0.15s;
+  color:var(--text);
+}
+.btn-gdrive:hover { background:var(--surface2); box-shadow:var(--shadow); }
+.btn-gdrive:disabled { opacity:0.6; cursor:wait; }
+
+/* ── DRIVE STATUS BADGE (header) ── */
+.drive-badge {
+  font-size:11px; font-weight:500;
+  padding:3px 10px; border-radius:20px;
+  background:var(--green-bg); color:var(--green);
+  border:1px solid var(--green-border);
+  display:inline-flex; align-items:center; gap:4px;
+}
+
+/* ── DRIVE EXPIRED BANNER ── */
+.drive-expired-banner {
+  position:fixed; top:56px; left:0; right:0; z-index:80;
+  background:var(--amber-bg); border-bottom:1px solid var(--amber-border);
+  padding:8px 2rem;
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  font-size:13px; color:var(--amber);
+}
+.drive-expired-banner button {
+  font-size:12px; font-weight:500; padding:4px 12px;
+  background:var(--orange); color:#fff;
+  border:none; border-radius:6px; cursor:pointer; font-family:inherit;
+}
+
+/* ── SAVING INDICATOR ── */
+.saving-indicator {
+  position:fixed; bottom:16px; right:16px; z-index:200;
+  background:var(--surface); border:1px solid var(--border);
+  border-radius:var(--radius); padding:7px 14px;
+  font-size:12px; color:var(--text2);
+  box-shadow:var(--shadow-md);
+  display:flex; align-items:center; gap:7px;
+}
+.spin-dot {
+  width:12px; height:12px;
+  border:2px solid #e0e0e0; border-top-color:#4A3AB0;
+  border-radius:50%; animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── STATUS VAR SHORTHANDS (if not already defined) ── */
+:root {
+  --st-norun:    var(--gray,#5A5855);
+  --st-executing:var(--blue);
+  --st-passed:   var(--green);
+  --st-failed:   var(--red);
+  --st-blocked:  var(--amber);
+  --st-cancelled:var(--purple);
+}
