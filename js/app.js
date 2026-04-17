@@ -1,10 +1,156 @@
-// ── QA TEST CASES — MAIN APP v3 ──
-// Safe data loading + CRUD (add/delete cases & features) via localStorage
+// ── QA TEST CASES — MAIN APP v4 (Supabase) ──
+// Data persisted via Supabase instead of localStorage
 
+// ══════════════════════════════════════════
+//  🔧 CONFIG — ใส่ค่า Supabase ของคุณที่นี่
+// ══════════════════════════════════════════
+const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+
+// ══════════════════════════════════════════
+//  Supabase client (ใช้ REST API โดยตรง)
+// ══════════════════════════════════════════
+const sb = {
+  async get(table, params = '') {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}${params}`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!r.ok) throw new Error(`GET ${table} failed: ${r.status}`);
+    return r.json();
+  },
+  async upsert(table, body) {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}`, {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error(`UPSERT ${table} failed: ${r.status}`);
+  },
+  async delete(table, match) {
+    const qs = Object.entries(match).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join('&');
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+      method: 'DELETE',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+    });
+    if (!r.ok) throw new Error(`DELETE ${table} failed: ${r.status}`);
+  },
+};
+
+// ══════════════════════════════════════════
+//  In-memory cache
+// ══════════════════════════════════════════
+let DB = {
+  status: {},
+  customFeatures: [],
+  customCases: {},
+  deletedCases: new Set(),
+};
+let DB_READY = false;
+
+async function loadDB() {
+  try {
+    showLoadingOverlay('กำลังโหลดข้อมูลจาก Supabase...');
+    const [statuses, features, cases, deleted] = await Promise.all([
+      sb.get('tc_status', '?select=case_id,status'),
+      sb.get('custom_features', '?select=id,meta_json&order=created_at'),
+      sb.get('custom_cases', '?select=id,feature_id,case_json&order=created_at'),
+      sb.get('deleted_cases', '?select=case_id'),
+    ]);
+    DB.status = Object.fromEntries(statuses.map(r => [r.case_id, r.status]));
+    DB.customFeatures = features.map(r => ({ meta: r.meta_json }));
+    DB.deletedCases = new Set(deleted.map(r => r.case_id));
+    DB.customCases = {};
+    cases.forEach(r => {
+      if (!DB.customCases[r.feature_id]) DB.customCases[r.feature_id] = [];
+      DB.customCases[r.feature_id].push(r.case_json);
+    });
+    DB_READY = true;
+    hideLoadingOverlay();
+  } catch (err) {
+    hideLoadingOverlay();
+    showDBError(err);
+  }
+}
+
+// ══════════════════════════════════════════
+//  DB helpers
+// ══════════════════════════════════════════
+function getStatus(id) { return DB.status[id] || 'no-run'; }
+async function setStatus(id, st) {
+  DB.status[id] = st;
+  await sb.upsert('tc_status', { case_id: id, status: st, updated_at: new Date().toISOString() });
+}
+function getCustomFeatures() { return DB.customFeatures; }
+function getCustomCases(fid) { return DB.customCases[fid] || []; }
+function getDeletedCases() { return DB.deletedCases; }
+
+async function saveCustomCase(fid, c) {
+  if (!DB.customCases[fid]) DB.customCases[fid] = [];
+  DB.customCases[fid].push(c);
+  await sb.upsert('custom_cases', { id: c.id, feature_id: fid, case_json: c });
+}
+async function deleteCustomCase(fid, caseId) {
+  if (DB.customCases[fid]) DB.customCases[fid] = DB.customCases[fid].filter(c => c.id !== caseId);
+  DB.deletedCases.add(caseId);
+  await Promise.all([
+    sb.delete('custom_cases', { id: caseId }),
+    sb.upsert('deleted_cases', { case_id: caseId }),
+  ]);
+}
+async function saveCustomFeature(f) {
+  DB.customFeatures.push(f);
+  await sb.upsert('custom_features', { id: f.meta.id, meta_json: f.meta });
+}
+async function deleteCustomFeature(fid) {
+  DB.customFeatures = DB.customFeatures.filter(f => f.meta.id !== fid);
+  await sb.delete('custom_features', { id: fid });
+}
+async function resetAllStatusDB() {
+  DB.status = {};
+  await fetch(`${SUPABASE_URL}/rest/v1/tc_status?case_id=neq.___none___`, {
+    method: 'DELETE',
+    headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` }
+  });
+}
+
+// ══════════════════════════════════════════
+//  Loading overlay UI
+// ══════════════════════════════════════════
+function showLoadingOverlay(msg = 'Loading...') {
+  let el = document.getElementById('db-loading');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'db-loading';
+    el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;font-family:inherit;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<div style="width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#4A3AB0;border-radius:50%;animation:spin .7s linear infinite;"></div><div style="font-size:14px;color:#555;">${msg}</div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
+  el.style.display = 'flex';
+}
+function hideLoadingOverlay() {
+  const el = document.getElementById('db-loading');
+  if (el) el.style.display = 'none';
+}
+function showDBError(err) {
+  let el = document.getElementById('db-loading');
+  if (!el) { el = document.createElement('div'); el.id = 'db-loading'; document.body.appendChild(el); }
+  el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.95);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;';
+  el.innerHTML = `<div style="font-size:32px;">⚠️</div><div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Supabase ไม่ได้</div><div style="font-size:13px;color:#555;max-width:380px;text-align:center;">กรุณาตรวจสอบ <code>SUPABASE_URL</code> และ <code>SUPABASE_ANON_KEY</code> ใน <code>js/app.js</code><br><br><em style="color:#888;">${err.message}</em></div><button onclick="location.reload()" style="margin-top:8px;padding:8px 20px;background:#4A3AB0;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">ลองใหม่</button>`;
+  el.style.display = 'flex';
+}
+
+// ══════════════════════════════════════════
+//  Data sources (built-in .js files)
+// ══════════════════════════════════════════
 const DATA_SOURCES = [
   { metaVar: 'XRAY_META', casesVar: 'XRAY_CASES' },
   { metaVar: 'AUTH_META',  casesVar: 'AUTH_CASES'  },
-  // 👉 { metaVar: 'MY_META', casesVar: 'MY_CASES' },
+  // { metaVar: 'MY_META', casesVar: 'MY_CASES' },
 ];
 
 const STATUSES = [
@@ -19,187 +165,166 @@ const STATUS_COLORS = {
   'no-run':'#D5D3CE','executing':'#B5D0F0','passed':'#A8D49D',
   'failed':'#F5AAAA','blocked':'#F5D68A','cancelled':'#C5BCEF',
 };
-const LS_STATUS='qa_tc_status_v1', LS_CF='qa_custom_features_v1',
-      LS_CC='qa_custom_cases_v1', LS_DEL='qa_deleted_cases_v1';
 
-let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all';
-
-const SCREEN_PALETTE=[
+let FEATURES = [], currentFeatureId = 'overview', activeType = 'all', activeScreen = 'all', activeStatusFilt = 'all';
+const SCREEN_PALETTE = [
   {bg:'#F0EFFE',color:'#4A3AB0',border:'#C5BCEF'},{bg:'#EAF2FB',color:'#185FA5',border:'#B5D0F0'},
   {bg:'#FFF4EC',color:'#D95F02',border:'#F5C49A'},{bg:'#EBF5E8',color:'#276B1F',border:'#A8D49D'},
   {bg:'#FFF8E6',color:'#8A5200',border:'#F5D68A'},{bg:'#E6F5F5',color:'#0F6B6B',border:'#8DD4D4'},
 ];
-function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
+function getScreenStyle(i) { return SCREEN_PALETTE[i % SCREEN_PALETTE.length]; }
 
-function lsGet(k,fb){try{return JSON.parse(localStorage.getItem(k))??fb;}catch{return fb;}}
-function lsSet(k,v){localStorage.setItem(k,JSON.stringify(v));}
-function getStatus(id){return lsGet(LS_STATUS,{})[id]||'no-run';}
-function setStatus(id,st){const m=lsGet(LS_STATUS,{});m[id]=st;lsSet(LS_STATUS,m);}
-function getCustomFeatures(){return lsGet(LS_CF,[]);}
-function getCustomCases(fid){return lsGet(LS_CC,{})[fid]||[];}
-function getDeletedCases(){return new Set(lsGet(LS_DEL,[]));}
-
-function saveCustomCase(fid,c){const m=lsGet(LS_CC,{});if(!m[fid])m[fid]=[];m[fid].push(c);lsSet(LS_CC,m);}
-function deleteCustomCase(fid,caseId){
-  const m=lsGet(LS_CC,{});if(m[fid]){m[fid]=m[fid].filter(c=>c.id!==caseId);lsSet(LS_CC,m);}
-  const d=lsGet(LS_DEL,[]);if(!d.includes(caseId)){d.push(caseId);lsSet(LS_DEL,d);}
-}
-function saveCustomFeature(f){const a=getCustomFeatures();a.push(f);lsSet(LS_CF,a);}
-function deleteCustomFeature(fid){lsSet(LS_CF,getCustomFeatures().filter(f=>f.meta.id!==fid));}
-
-function buildFeatures(){
-  const deleted=getDeletedCases();
-  const builtIn=DATA_SOURCES
-    .filter(s=>typeof window[s.metaVar]!=='undefined')
-    .map(s=>{
-      const extra=getCustomCases(window[s.metaVar].id).filter(c=>!deleted.has(c.id));
-      const base=window[s.casesVar].filter(c=>!deleted.has(c.id)&&!extra.some(e=>e.id===c.id));
-      return{meta:window[s.metaVar],cases:[...base,...extra],custom:false};
+function buildFeatures() {
+  const deleted = getDeletedCases();
+  const builtIn = DATA_SOURCES
+    .filter(s => typeof window[s.metaVar] !== 'undefined')
+    .map(s => {
+      const extra = getCustomCases(window[s.metaVar].id).filter(c => !deleted.has(c.id));
+      const base = window[s.casesVar].filter(c => !deleted.has(c.id) && !extra.some(e => e.id === c.id));
+      return { meta: window[s.metaVar], cases: [...base, ...extra], custom: false };
     });
-  const custom=getCustomFeatures().map(f=>{
-    const extra=getCustomCases(f.meta.id).filter(c=>!deleted.has(c.id));
-    return{meta:f.meta,cases:extra,custom:true};
+  const custom = getCustomFeatures().map(f => {
+    const extra = getCustomCases(f.meta.id).filter(c => !deleted.has(c.id));
+    return { meta: f.meta, cases: extra, custom: true };
   });
-  return[...builtIn,...custom];
+  return [...builtIn, ...custom];
 }
 
-function getStatusCounts(cases){
-  const c={};STATUSES.forEach(s=>c[s.key]=0);
-  cases.forEach(tc=>{const st=getStatus(tc.id);c[st]=(c[st]||0)+1;});return c;
+function getStatusCounts(cases) {
+  const c = {}; STATUSES.forEach(s => c[s.key] = 0);
+  cases.forEach(tc => { const st = getStatus(tc.id); c[st] = (c[st] || 0) + 1; }); return c;
 }
-function buildProgressBar(counts,total,seg){
-  return STATUSES.map(s=>{
-    if(!counts[s.key])return'';
-    const pct=total?(counts[s.key]/total*100).toFixed(1):0;
-    return`<div class="${seg}" style="width:${pct}%;background:${STATUS_COLORS[s.key]};"></div>`;
+function buildProgressBar(counts, total, seg) {
+  return STATUSES.map(s => {
+    if (!counts[s.key]) return '';
+    const pct = total ? (counts[s.key] / total * 100).toFixed(1) : 0;
+    return `<div class="${seg}" style="width:${pct}%;background:${STATUS_COLORS[s.key]};"></div>`;
   }).join('');
 }
 
-function statusSelectHtml(caseId,featureId){
-  const cur=getStatus(caseId);
-  const def=STATUSES.find(s=>s.key===cur)||STATUSES[0];
-  const opts=STATUSES.map(s=>`<option value="${s.key}"${s.key===cur?' selected':''}>${s.icon} ${s.label}</option>`).join('');
-  return`<select class="status-select ${def.cssClass}" onclick="event.stopPropagation()" onchange="onStatusChange('${caseId}','${featureId}',this)">${opts}</select>`;
+function statusSelectHtml(caseId, featureId) {
+  const cur = getStatus(caseId);
+  const def = STATUSES.find(s => s.key === cur) || STATUSES[0];
+  const opts = STATUSES.map(s => `<option value="${s.key}"${s.key === cur ? ' selected' : ''}>${s.icon} ${s.label}</option>`).join('');
+  return `<select class="status-select ${def.cssClass}" onclick="event.stopPropagation()" onchange="onStatusChange('${caseId}','${featureId}',this)">${opts}</select>`;
 }
-function onStatusChange(caseId,featureId,sel){
-  setStatus(caseId,sel.value);
-  STATUSES.forEach(s=>sel.classList.remove(s.cssClass));
-  sel.classList.add(STATUSES.find(s=>s.key===sel.value).cssClass);
+
+async function onStatusChange(caseId, featureId, sel) {
+  const newStatus = sel.value;
+  STATUSES.forEach(s => sel.classList.remove(s.cssClass));
+  sel.classList.add(STATUSES.find(s => s.key === newStatus).cssClass);
+  sel.disabled = true;
+  try { await setStatus(caseId, newStatus); } finally { sel.disabled = false; }
   updateHeaderStrip();
-  if(currentFeatureId==='overview')refreshFeatureRowStats(featureId);
+  if (currentFeatureId === 'overview') refreshFeatureRowStats(featureId);
   else refreshStatusStatsBar(featureId);
 }
 
-function init(){FEATURES=buildFeatures();injectScreenStyles();buildNavTabs();renderOverview();updateHeaderStrip();}
+async function init() {
+  await loadDB();
+  if (!DB_READY) return;
+  FEATURES = buildFeatures();
+  injectScreenStyles(); buildNavTabs(); renderOverview(); updateHeaderStrip();
+}
 
-function injectScreenStyles(){
-  let s=document.getElementById('dyn-styles');
-  if(!s){s=document.createElement('style');s.id='dyn-styles';document.head.appendChild(s);}
-  s.textContent='';
-  FEATURES.forEach(f=>Object.entries(f.meta.screens).forEach(([,sc],i)=>{
-    const p=getScreenStyle(i);
-    s.textContent+=`.${sc.cssClass}{background:${p.bg};color:${p.color};border:1px solid ${p.border};}`;
+function injectScreenStyles() {
+  let s = document.getElementById('dyn-styles');
+  if (!s) { s = document.createElement('style'); s.id = 'dyn-styles'; document.head.appendChild(s); }
+  s.textContent = '';
+  FEATURES.forEach(f => Object.entries(f.meta.screens).forEach(([, sc], i) => {
+    const p = getScreenStyle(i);
+    s.textContent += `.${sc.cssClass}{background:${p.bg};color:${p.color};border:1px solid ${p.border};}`;
   }));
 }
 
-function updateHeaderStrip(){
-  FEATURES=buildFeatures();
-  const ac=FEATURES.flatMap(f=>f.cases),counts=getStatusCounts(ac);
-  const el=document.getElementById('hdr-status-strip');if(!el)return;
-  el.innerHTML=STATUSES.filter(s=>counts[s.key]>0).map(s=>
-    `<span class="hdr-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">
-      <span class="dot" style="background:${STATUS_COLORS[s.key]};"></span>${s.label} <strong>${counts[s.key]}</strong>
-    </span>`).join('')+
+function updateHeaderStrip() {
+  FEATURES = buildFeatures();
+  const ac = FEATURES.flatMap(f => f.cases), counts = getStatusCounts(ac);
+  const el = document.getElementById('hdr-status-strip'); if (!el) return;
+  el.innerHTML = STATUSES.filter(s => counts[s.key] > 0).map(s =>
+    `<span class="hdr-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};"><span class="dot" style="background:${STATUS_COLORS[s.key]};"></span>${s.label} <strong>${counts[s.key]}</strong></span>`).join('') +
     `<span style="font-size:11px;color:var(--text3);margin-left:2px;">${ac.length} total</span>`;
 }
 
-function buildNavTabs(){
-  const wrap=document.getElementById('nav-tabs');
-  const total=FEATURES.reduce((s,f)=>s+f.cases.length,0);
-  wrap.innerHTML=`
-    <button class="nav-tab active" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>
-    ${FEATURES.map(f=>`<button class="nav-tab" id="tab-${f.meta.id}" onclick="switchTab('${f.meta.id}')">${f.meta.emoji} ${f.meta.name} <span class="tab-count">${f.cases.length}</span></button>`).join('')}
+function buildNavTabs() {
+  const wrap = document.getElementById('nav-tabs');
+  const total = FEATURES.reduce((s, f) => s + f.cases.length, 0);
+  wrap.innerHTML = `<button class="nav-tab active" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>
+    ${FEATURES.map(f => `<button class="nav-tab" id="tab-${f.meta.id}" onclick="switchTab('${f.meta.id}')">${f.meta.emoji} ${f.meta.name} <span class="tab-count">${f.cases.length}</span></button>`).join('')}
     <button class="nav-tab" id="tab-add-feature" onclick="openAddFeatureModal()" style="color:var(--orange);">＋ Feature</button>`;
 }
-function rebuildNav(){
-  FEATURES=buildFeatures();buildNavTabs();
+function rebuildNav() {
+  FEATURES = buildFeatures(); buildNavTabs();
   document.getElementById(`tab-${currentFeatureId}`)?.classList.add('active');
-  if(currentFeatureId==='overview')document.getElementById('tab-overview')?.classList.add('active');
+  if (currentFeatureId === 'overview') document.getElementById('tab-overview')?.classList.add('active');
 }
-function switchTab(id){
-  currentFeatureId=id;activeType=activeScreen=activeStatusFilt='all';
-  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+function switchTab(id) {
+  currentFeatureId = id; activeType = activeScreen = activeStatusFilt = 'all';
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.getElementById(`tab-${id}`)?.classList.add('active');
-  if(id==='overview')renderOverview();
-  else{const f=FEATURES.find(f=>f.meta.id===id);if(f)renderFeature(f);}
+  if (id === 'overview') renderOverview();
+  else { const f = FEATURES.find(f => f.meta.id === id); if (f) renderFeature(f); }
 }
 
-function renderOverview(){
-  FEATURES=buildFeatures();
-  const ac=FEATURES.flatMap(f=>f.cases),total=ac.length,counts=getStatusCounts(ac);
-  const statNums={passed:'var(--green)',failed:'var(--red)',executing:'var(--blue)',blocked:'var(--amber)',cancelled:'var(--purple)','no-run':'var(--text3)'};
-  document.getElementById('main-content').innerHTML=`
+function renderOverview() {
+  FEATURES = buildFeatures();
+  const ac = FEATURES.flatMap(f => f.cases), total = ac.length, counts = getStatusCounts(ac);
+  const statNums = { passed:'var(--green)',failed:'var(--red)',executing:'var(--blue)',blocked:'var(--amber)',cancelled:'var(--purple)','no-run':'var(--text3)' };
+  document.getElementById('main-content').innerHTML = `
     <div class="ov-summary-bar">
       <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--blue);">${total}</span><span class="ov-summary-lbl">Total cases</span></div>
       <div class="ov-divider"></div>
       <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--text2);">${FEATURES.length}</span><span class="ov-summary-lbl">Features</span></div>
       <div class="ov-divider"></div>
-      ${STATUSES.map(s=>`<div class="ov-summary-item"><span class="ov-summary-num" style="color:${statNums[s.key]};">${counts[s.key]}</span><span class="ov-summary-lbl">${s.label}</span></div>`).join('')}
+      ${STATUSES.map(s => `<div class="ov-summary-item"><span class="ov-summary-num" style="color:${statNums[s.key]};">${counts[s.key]}</span><span class="ov-summary-lbl">${s.label}</span></div>`).join('')}
       <div class="ov-divider"></div>
-      <div class="ov-progress-wrap">
-        <div class="ov-progress-label">Overall progress</div>
-        <div class="ov-progress-bar" id="ov-global-progress">${buildProgressBar(counts,total,'ov-pb-seg')}</div>
-      </div>
+      <div class="ov-progress-wrap"><div class="ov-progress-label">Overall progress</div><div class="ov-progress-bar" id="ov-global-progress">${buildProgressBar(counts, total, 'ov-pb-seg')}</div></div>
     </div>
     <div class="section-sep"><span>Features</span><span class="count-pill">${FEATURES.length} features · ${total} cases</span></div>
-    <div class="ov-list" id="ov-list">
-      ${FEATURES.length===0?`<div class="empty-state"><div class="emoji">📂</div><p>ยังไม่มี feature — กด <strong>＋ Feature</strong> เพื่อเริ่ม</p></div>`:FEATURES.map(f=>buildFeatureRow(f)).join('')}
-    </div>`;
+    <div class="ov-list" id="ov-list">${FEATURES.length === 0
+      ? `<div class="empty-state"><div class="emoji">📂</div><p>ยังไม่มี feature — กด <strong>＋ Feature</strong> เพื่อเริ่ม</p></div>`
+      : FEATURES.map(f => buildFeatureRow(f)).join('')}</div>`;
 }
 
-function buildFeatureRow(f){
-  const counts=getStatusCounts(f.cases),total=f.cases.length;
-  const tags=f.meta.tags.map(t=>`<span class="badge ${t.style}">${t.label}</span>`).join('');
-  const mini=STATUSES.filter(s=>counts[s.key]>0).map(s=>
+function buildFeatureRow(f) {
+  const counts = getStatusCounts(f.cases), total = f.cases.length;
+  const tags = f.meta.tags.map(t => `<span class="badge ${t.style}">${t.label}</span>`).join('');
+  const mini = STATUSES.filter(s => counts[s.key] > 0).map(s =>
     `<span class="ov-mini-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} ${counts[s.key]}</span>`
-  ).join('')||`<span style="font-size:11px;color:var(--text3);">No Run</span>`;
-  const del=f.custom?`<button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteFeature('${f.meta.id}')" title="ลบ feature">🗑</button>`:'';
-  return`<div class="ov-feature-row" onclick="switchTab('${f.meta.id}')">
+  ).join('') || `<span style="font-size:11px;color:var(--text3);">No Run</span>`;
+  const del = f.custom ? `<button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteFeature('${f.meta.id}')" title="ลบ feature">🗑</button>` : '';
+  return `<div class="ov-feature-row" onclick="switchTab('${f.meta.id}')">
     <div class="ov-feature-icon" style="background:${f.meta.colorBg};border-color:${f.meta.colorBorder};">${f.meta.emoji}</div>
-    <div class="ov-feature-info">
-      <div class="ov-feature-name">${f.meta.name} ${del}</div>
-      <div class="ov-feature-desc">${f.meta.description}</div>
-      <div class="ov-feature-tags">${tags}</div>
-    </div>
+    <div class="ov-feature-info"><div class="ov-feature-name">${f.meta.name} ${del}</div><div class="ov-feature-desc">${f.meta.description}</div><div class="ov-feature-tags">${tags}</div></div>
     <div class="ov-feature-stats" id="ov-row-stats-${f.meta.id}">
       <div class="ov-stat-row">${mini}</div>
-      <div class="ov-progress-track" style="width:180px;">${buildProgressBar(counts,total,'ov-pt-seg')}</div>
+      <div class="ov-progress-track" style="width:180px;">${buildProgressBar(counts, total, 'ov-pt-seg')}</div>
       <div style="font-size:11px;color:var(--text3);">${total} cases</div>
     </div>
   </div>`;
 }
 
-function refreshFeatureRowStats(fid){
-  FEATURES=buildFeatures();const f=FEATURES.find(f=>f.meta.id===fid);if(!f)return;
-  const el=document.getElementById(`ov-row-stats-${fid}`);if(!el)return;
-  const counts=getStatusCounts(f.cases),total=f.cases.length;
-  const mini=STATUSES.filter(s=>counts[s.key]>0).map(s=>
+function refreshFeatureRowStats(fid) {
+  FEATURES = buildFeatures(); const f = FEATURES.find(f => f.meta.id === fid); if (!f) return;
+  const el = document.getElementById(`ov-row-stats-${fid}`); if (!el) return;
+  const counts = getStatusCounts(f.cases), total = f.cases.length;
+  const mini = STATUSES.filter(s => counts[s.key] > 0).map(s =>
     `<span class="ov-mini-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} ${counts[s.key]}</span>`
-  ).join('')||`<span style="font-size:11px;color:var(--text3);">No Run</span>`;
-  el.innerHTML=`<div class="ov-stat-row">${mini}</div><div class="ov-progress-track" style="width:180px;">${buildProgressBar(counts,total,'ov-pt-seg')}</div><div style="font-size:11px;color:var(--text3);">${total} cases</div>`;
-  const gp=document.getElementById('ov-global-progress');
-  if(gp){const ac=FEATURES.flatMap(f=>f.cases);gp.innerHTML=buildProgressBar(getStatusCounts(ac),ac.length,'ov-pb-seg');}
+  ).join('') || `<span style="font-size:11px;color:var(--text3);">No Run</span>`;
+  el.innerHTML = `<div class="ov-stat-row">${mini}</div><div class="ov-progress-track" style="width:180px;">${buildProgressBar(counts, total, 'ov-pt-seg')}</div><div style="font-size:11px;color:var(--text3);">${total} cases</div>`;
+  const gp = document.getElementById('ov-global-progress');
+  if (gp) { const ac = FEATURES.flatMap(f => f.cases); gp.innerHTML = buildProgressBar(getStatusCounts(ac), ac.length, 'ov-pb-seg'); }
 }
 
-function renderFeature(feature){
-  const{meta,cases}=feature;
-  const tags=meta.tags.map(t=>`<span class="badge ${t.style}">${t.label}</span>`).join('');
-  const screenBtns=Object.entries(meta.screens).map(([k,sc],i)=>{
-    const cls=['active-purple','active-blue','active-orange','active-green','active-amber','active-teal'][i%6];
-    return`<button class="filter-btn" onclick="setScreenFilter('${k}',this,'${cls}')">${sc.label} – ${sc.name}</button>`;
+function renderFeature(feature) {
+  const { meta, cases } = feature;
+  const tags = meta.tags.map(t => `<span class="badge ${t.style}">${t.label}</span>`).join('');
+  const screenBtns = Object.entries(meta.screens).map(([k, sc], i) => {
+    const cls = ['active-purple','active-blue','active-orange','active-green','active-amber','active-teal'][i % 6];
+    return `<button class="filter-btn" onclick="setScreenFilter('${k}',this,'${cls}')">${sc.label} – ${sc.name}</button>`;
   }).join('');
-  const delFeat=feature.custom?`<button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>`:'';
-  document.getElementById('main-content').innerHTML=`
+  const delFeat = feature.custom ? `<button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>` : '';
+  document.getElementById('main-content').innerHTML = `
     <div class="feature-header">
       <div style="font-size:24px;">${meta.emoji}</div>
       <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div><div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
@@ -227,7 +352,7 @@ function renderFeature(feature){
     </div></div>
     <div class="filter-section"><div class="filter-label">Status</div><div class="filter-group" id="status-filters">
       <button class="filter-btn active" onclick="setStatusFilter('all',this,'active')">All status</button>
-      ${STATUSES.map(s=>`<button class="filter-btn" onclick="setStatusFilter('${s.key}',this,'${s.filterClass}')">${s.icon} ${s.label}</button>`).join('')}
+      ${STATUSES.map(s => `<button class="filter-btn" onclick="setStatusFilter('${s.key}',this,'${s.filterClass}')">${s.icon} ${s.label}</button>`).join('')}
     </div></div>
     <div class="section-sep"><span>Test cases — ${meta.name}</span><span class="count-pill" id="showing-count">— / ${cases.length}</span></div>
     <table class="tc-table">
@@ -239,65 +364,64 @@ function renderFeature(feature){
       <tbody id="tc-tbody"></tbody>
     </table>
     <div class="empty-state" id="empty-state" style="display:none;"><div class="emoji">🔍</div><p>ไม่พบ test case</p></div>`;
-  updateTypeStats(cases);refreshStatusStatsBar(meta.id);applyFilters();
+  updateTypeStats(cases); refreshStatusStatsBar(meta.id); applyFilters();
 }
 
-function refreshStatusStatsBar(fid){
-  const el=document.getElementById('status-stats-bar');if(!el)return;
-  const f=FEATURES.find(f=>f.meta.id===fid);if(!f)return;
-  const counts=getStatusCounts(f.cases),total=f.cases.length;
-  el.innerHTML=`<span class="ssg-label">Test Run</span>
-    ${STATUSES.map(s=>`<span class="ssg-item" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} <strong>${counts[s.key]}</strong></span>`).join('')}
-    <div class="ssg-progress">${buildProgressBar(counts,total,'ssg-pt-seg')}</div>`;
+function refreshStatusStatsBar(fid) {
+  const el = document.getElementById('status-stats-bar'); if (!el) return;
+  const f = FEATURES.find(f => f.meta.id === fid); if (!f) return;
+  const counts = getStatusCounts(f.cases), total = f.cases.length;
+  el.innerHTML = `<span class="ssg-label">Test Run</span>
+    ${STATUSES.map(s => `<span class="ssg-item" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} <strong>${counts[s.key]}</strong></span>`).join('')}
+    <div class="ssg-progress">${buildProgressBar(counts, total, 'ssg-pt-seg')}</div>`;
 }
 
-function clearGroup(id){document.querySelectorAll(`#${id} .filter-btn`).forEach(b=>b.className=b.className.replace(/\bactive[\w-]*/g,'').trim());}
-function setTypeFilter(v,b,c){clearGroup('type-filters');b.classList.add(c);activeType=v;applyFilters();}
-function setScreenFilter(v,b,c){clearGroup('screen-filters');b.classList.add(c);activeScreen=v;applyFilters();}
-function setStatusFilter(v,b,c){clearGroup('status-filters');b.classList.add(c);activeStatusFilt=v;applyFilters();}
+function clearGroup(id) { document.querySelectorAll(`#${id} .filter-btn`).forEach(b => b.className = b.className.replace(/\bactive[\w-]*/g, '').trim()); }
+function setTypeFilter(v, b, c) { clearGroup('type-filters'); b.classList.add(c); activeType = v; applyFilters(); }
+function setScreenFilter(v, b, c) { clearGroup('screen-filters'); b.classList.add(c); activeScreen = v; applyFilters(); }
+function setStatusFilter(v, b, c) { clearGroup('status-filters'); b.classList.add(c); activeStatusFilt = v; applyFilters(); }
 
-function applyFilters(){
-  const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(!f)return;
-  const q=(document.getElementById('search-input')?.value||'').toLowerCase();
-  const filtered=f.cases.filter(c=>{
-    const typeOk=activeType==='all'||c.type===activeType;
-    const screenOk=activeScreen==='all'||c.screen===activeScreen;
-    const stOk=activeStatusFilt==='all'||getStatus(c.id)===activeStatusFilt;
-    const srchOk=!q||[c.title,c.sub,c.id,...c.steps,...c.expect].some(s=>s.toLowerCase().includes(q));
-    return typeOk&&screenOk&&stOk&&srchOk;
+function applyFilters() {
+  const f = FEATURES.find(f => f.meta.id === currentFeatureId); if (!f) return;
+  const q = (document.getElementById('search-input')?.value || '').toLowerCase();
+  const filtered = f.cases.filter(c => {
+    const typeOk = activeType === 'all' || c.type === activeType;
+    const screenOk = activeScreen === 'all' || c.screen === activeScreen;
+    const stOk = activeStatusFilt === 'all' || getStatus(c.id) === activeStatusFilt;
+    const srchOk = !q || [c.title, c.sub, c.id, ...c.steps, ...c.expect].some(s => s.toLowerCase().includes(q));
+    return typeOk && screenOk && stOk && srchOk;
   });
-  renderTable(filtered,f);
+  renderTable(filtered, f);
 }
 
-function renderTable(list,feature){
-  const tbody=document.getElementById('tc-tbody'),countEl=document.getElementById('showing-count'),emptyEl=document.getElementById('empty-state');
-  if(!tbody)return;
-  countEl.textContent=`${list.length} / ${feature.cases.length}`;
-  emptyEl.style.display=list.length?'none':'block';
-  if(!list.length){tbody.innerHTML='';return;}
-  const customIds=new Set(getCustomCases(feature.meta.id).map(c=>c.id));
-  tbody.innerHTML=list.map(c=>{
-    const sc=feature.meta.screens[c.screen];
-    const typePill=`<span class="type-pill tp-${c.type}">${{positive:'✓ Positive',edge:'~ Edge',negative:'✗ Negative'}[c.type]||c.type}</span>`;
-    const screenTag=sc?`<span class="screen-tag ${sc.cssClass}">${sc.label}<br><small style="font-weight:400;opacity:.75;">${sc.name}</small></span>`:`<span class="screen-tag">${c.screen}</span>`;
-    const customBadge=customIds.has(c.id)?`<span style="font-size:10px;background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-border);padding:1px 6px;border-radius:10px;margin-left:4px;">custom</span>`:'';
-    return`
-    <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
+function renderTable(list, feature) {
+  const tbody = document.getElementById('tc-tbody'), countEl = document.getElementById('showing-count'), emptyEl = document.getElementById('empty-state');
+  if (!tbody) return;
+  countEl.textContent = `${list.length} / ${feature.cases.length}`;
+  emptyEl.style.display = list.length ? 'none' : 'block';
+  if (!list.length) { tbody.innerHTML = ''; return; }
+  const customIds = new Set(getCustomCases(feature.meta.id).map(c => c.id));
+  tbody.innerHTML = list.map(c => {
+    const sc = feature.meta.screens[c.screen];
+    const typePill = `<span class="type-pill tp-${c.type}">${{positive:'✓ Positive',edge:'~ Edge',negative:'✗ Negative'}[c.type] || c.type}</span>`;
+    const screenTag = sc ? `<span class="screen-tag ${sc.cssClass}">${sc.label}<br><small style="font-weight:400;opacity:.75;">${sc.name}</small></span>` : `<span class="screen-tag">${c.screen}</span>`;
+    const customBadge = customIds.has(c.id) ? `<span style="font-size:10px;background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-border);padding:1px 6px;border-radius:10px;margin-left:4px;">custom</span>` : '';
+    return `<tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
       <td class="col-title"><div class="tc-title-text">${c.title}${customBadge}</div><div class="tc-sub-text">${c.sub}</div></td>
       <td class="col-type hide-sm">${typePill}</td>
-      <td class="col-status">${statusSelectHtml(c.id,feature.meta.id)}</td>
+      <td class="col-status">${statusSelectHtml(c.id, feature.meta.id)}</td>
       <td class="col-actions"><button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteCase('${c.id}','${feature.meta.id}')" title="ลบ">🗑</button></td>
     </tr>
     <tr class="detail-row" id="detail-${c.id}">
       <td colspan="6" style="padding:0 0 8px 0;">
         <div class="detail-inner">
           <div><div class="detail-section-title">Steps to reproduce</div>
-            <ol class="detail-list steps-list">${c.steps.map((s,i)=>`<li><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);margin-right:5px;">${i+1}.</strong>${s}</li>`).join('')}</ol>
+            <ol class="detail-list steps-list">${c.steps.map((s, i) => `<li><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);margin-right:5px;">${i + 1}.</strong>${s}</li>`).join('')}</ol>
           </div>
           <div><div class="detail-section-title">Expected behavior</div>
-            <ul class="detail-list expect-list">${c.expect.map(e=>`<li>${e}</li>`).join('')}</ul>
+            <ul class="detail-list expect-list">${c.expect.map(e => `<li>${e}</li>`).join('')}</ul>
           </div>
         </div>
       </td>
@@ -305,57 +429,66 @@ function renderTable(list,feature){
   }).join('');
 }
 
-function toggleDetail(id){
-  const dr=document.getElementById(`detail-${id}`),mr=document.getElementById(`row-${id}`),open=dr.classList.contains('open');
-  document.querySelectorAll('.detail-row.open').forEach(r=>r.classList.remove('open'));
-  document.querySelectorAll('.tc-row.expanded').forEach(r=>r.classList.remove('expanded'));
-  if(!open){dr.classList.add('open');mr.classList.add('expanded');dr.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function toggleDetail(id) {
+  const dr = document.getElementById(`detail-${id}`), mr = document.getElementById(`row-${id}`), open = dr.classList.contains('open');
+  document.querySelectorAll('.detail-row.open').forEach(r => r.classList.remove('open'));
+  document.querySelectorAll('.tc-row.expanded').forEach(r => r.classList.remove('expanded'));
+  if (!open) { dr.classList.add('open'); mr.classList.add('expanded'); dr.scrollIntoView({behavior:'smooth',block:'nearest'}); }
 }
-function updateTypeStats(cases){
-  document.getElementById('s-total').textContent=cases.length;
-  document.getElementById('s-pos').textContent=cases.filter(c=>c.type==='positive').length;
-  document.getElementById('s-edge').textContent=cases.filter(c=>c.type==='edge').length;
-  document.getElementById('s-neg').textContent=cases.filter(c=>c.type==='negative').length;
+function updateTypeStats(cases) {
+  document.getElementById('s-total').textContent = cases.length;
+  document.getElementById('s-pos').textContent = cases.filter(c => c.type === 'positive').length;
+  document.getElementById('s-edge').textContent = cases.filter(c => c.type === 'edge').length;
+  document.getElementById('s-neg').textContent = cases.filter(c => c.type === 'negative').length;
 }
 
-function confirmDeleteCase(caseId,featureId){
+function confirmDeleteCase(caseId, featureId) {
   openConfirmModal('ลบ Test Case',
     `ต้องการลบ <strong>${caseId}</strong> ออกใช่ไหม?<br><span style="color:var(--text2);font-size:12px;">Built-in case จะถูกซ่อน, Custom case จะถูกลบถาวร</span>`,
-    ()=>{
-      deleteCustomCase(featureId,caseId);FEATURES=buildFeatures();
-      const f=FEATURES.find(f=>f.meta.id===featureId);
-      if(f)renderFeature(f);else renderOverview();
-      rebuildNav();updateHeaderStrip();
+    async () => {
+      showLoadingOverlay('กำลังลบ...');
+      await deleteCustomCase(featureId, caseId);
+      FEATURES = buildFeatures();
+      hideLoadingOverlay();
+      const f = FEATURES.find(f => f.meta.id === featureId);
+      if (f) renderFeature(f); else renderOverview();
+      rebuildNav(); updateHeaderStrip();
     }
   );
 }
 
-function confirmDeleteFeature(featureId){
-  const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
-  if(!f.custom){alert('Built-in feature ไม่สามารถลบจาก UI ได้\nลบไฟล์ data/*.js แล้ว refresh แทน');return;}
+function confirmDeleteFeature(featureId) {
+  const f = FEATURES.find(f => f.meta.id === featureId); if (!f) return;
+  if (!f.custom) { alert('Built-in feature ไม่สามารถลบจาก UI ได้\nลบไฟล์ data/*.js แล้ว refresh แทน'); return; }
   openConfirmModal('ลบ Feature',
     `ต้องการลบ <strong>${f.meta.emoji} ${f.meta.name}</strong> ทั้งหมดใช่ไหม?<br><span style="color:var(--red);font-size:12px;">ลบทุก test case ใน feature นี้ด้วย</span>`,
-    ()=>{
-      const st=lsGet(LS_STATUS,{});f.cases.forEach(c=>delete st[c.id]);lsSet(LS_STATUS,st);
-      const cc=lsGet(LS_CC,{});delete cc[featureId];lsSet(LS_CC,cc);
-      deleteCustomFeature(featureId);FEATURES=buildFeatures();
-      currentFeatureId='overview';rebuildNav();renderOverview();updateHeaderStrip();
+    async () => {
+      showLoadingOverlay('กำลังลบ...');
+      await Promise.all(f.cases.map(c => sb.delete('tc_status', { case_id: c.id }).catch(() => {})));
+      const cases = getCustomCases(featureId);
+      await Promise.all(cases.map(c => sb.delete('custom_cases', { id: c.id }).catch(() => {})));
+      delete DB.customCases[featureId];
+      f.cases.forEach(c => delete DB.status[c.id]);
+      await deleteCustomFeature(featureId);
+      FEATURES = buildFeatures();
+      currentFeatureId = 'overview';
+      hideLoadingOverlay();
+      rebuildNav(); renderOverview(); updateHeaderStrip();
     }
   );
 }
 
-function openAddCaseModal(featureId){
-  const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
-  const screenOptions=Object.entries(f.meta.screens).map(([k,sc])=>`<option value="${k}">${sc.label} – ${sc.name}</option>`).join('');
-  const nums=f.cases.map(c=>parseInt(c.id.replace(/\D/g,''))||0);
-  const next=(Math.max(0,...nums)+1).toString().padStart(2,'0');
-  const prefix=featureId.split('-').map(w=>w[0].toUpperCase()).join('');
-  const suggested=`${prefix}-${next}`;
-  openModal('add-case-modal',`
+function openAddCaseModal(featureId) {
+  const f = FEATURES.find(f => f.meta.id === featureId); if (!f) return;
+  const screenOptions = Object.entries(f.meta.screens).map(([k, sc]) => `<option value="${k}">${sc.label} – ${sc.name}</option>`).join('');
+  const nums = f.cases.map(c => parseInt(c.id.replace(/\D/g, '')) || 0);
+  const next = (Math.max(0, ...nums) + 1).toString().padStart(2, '0');
+  const prefix = featureId.split('-').map(w => w[0].toUpperCase()).join('');
+  openModal('add-case-modal', `
     <div class="modal-header"><span class="modal-title">＋ Add Test Case</span><span class="modal-sub">${f.meta.emoji} ${f.meta.name}</span></div>
     <div class="modal-body">
       <div class="form-row2">
-        <div class="form-group"><label>Case ID</label><input class="form-input" id="fc-id" value="${suggested}" /></div>
+        <div class="form-group"><label>Case ID</label><input class="form-input" id="fc-id" value="${prefix}-${next}" /></div>
         <div class="form-group"><label>Type</label><select class="form-select" id="fc-type">
           <option value="positive">✓ Positive</option><option value="edge">~ Edge case</option><option value="negative">✗ Negative</option>
         </select></div>
@@ -374,24 +507,31 @@ function openAddCaseModal(featureId){
     </div>`);
 }
 
-function submitAddCase(featureId){
-  const id=document.getElementById('fc-id').value.trim();
-  const type=document.getElementById('fc-type').value;
-  const screen=document.getElementById('fc-screen').value;
-  const title=document.getElementById('fc-title').value.trim();
-  const sub=document.getElementById('fc-sub').value.trim();
-  const steps=document.getElementById('fc-steps').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const expect=document.getElementById('fc-expect').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!id||!title||!steps.length||!expect.length){showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ');return;}
-  const f=FEATURES.find(f=>f.meta.id===featureId);
-  if(f&&f.cases.some(c=>c.id===id)){showFormError(`Case ID "${id}" ซ้ำกับที่มีอยู่แล้ว`);return;}
-  saveCustomCase(featureId,{id,type,screen,title,sub,steps,expect});
-  FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
-  const feat=FEATURES.find(f=>f.meta.id===featureId);if(feat)renderFeature(feat);
+async function submitAddCase(featureId) {
+  const id = document.getElementById('fc-id').value.trim();
+  const type = document.getElementById('fc-type').value;
+  const screen = document.getElementById('fc-screen').value;
+  const title = document.getElementById('fc-title').value.trim();
+  const sub = document.getElementById('fc-sub').value.trim();
+  const steps = document.getElementById('fc-steps').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const expect = document.getElementById('fc-expect').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!id || !title || !steps.length || !expect.length) { showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ'); return; }
+  const f = FEATURES.find(f => f.meta.id === featureId);
+  if (f && f.cases.some(c => c.id === id)) { showFormError(`Case ID "${id}" ซ้ำกับที่มีอยู่แล้ว`); return; }
+  const okBtn = document.querySelector('.btn-modal-ok');
+  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลังบันทึก...'; }
+  try {
+    await saveCustomCase(featureId, { id, type, screen, title, sub, steps, expect });
+    FEATURES = buildFeatures(); closeModal(); rebuildNav(); updateHeaderStrip();
+    const feat = FEATURES.find(f => f.meta.id === featureId); if (feat) renderFeature(feat);
+  } catch (err) {
+    showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
+    if (okBtn) { okBtn.disabled = false; okBtn.textContent = 'บันทึก'; }
+  }
 }
 
-function openAddFeatureModal(){
-  openModal('add-feature-modal',`
+function openAddFeatureModal() {
+  openModal('add-feature-modal', `
     <div class="modal-header"><span class="modal-title">＋ Add Feature</span><span class="modal-sub">สร้าง feature ใหม่</span></div>
     <div class="modal-body">
       <div class="form-row2">
@@ -415,7 +555,7 @@ function openAddFeatureModal(){
     </div>`);
 }
 
-const THEME_COLORS={
+const THEME_COLORS = {
   orange:{color:'#D95F02',colorBg:'#FFF4EC',colorBorder:'#F5C49A',badge:'badge-orange'},
   blue:  {color:'#185FA5',colorBg:'#EAF2FB',colorBorder:'#B5D0F0',badge:'badge-blue'},
   green: {color:'#276B1F',colorBg:'#EBF5E8',colorBorder:'#A8D49D',badge:'badge-green'},
@@ -424,53 +564,64 @@ const THEME_COLORS={
   amber: {color:'#8A5200',colorBg:'#FFF8E6',colorBorder:'#F5D68A',badge:'badge-gray'},
 };
 
-function submitAddFeature(){
-  const id=document.getElementById('ff-id').value.trim().replace(/\s+/g,'-').toLowerCase();
-  const emoji=document.getElementById('ff-emoji').value.trim()||'📋';
-  const name=document.getElementById('ff-name').value.trim();
-  const desc=document.getElementById('ff-desc').value.trim();
-  const theme=document.getElementById('ff-color').value;
-  const screenLines=document.getElementById('ff-screens').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const tagLines=document.getElementById('ff-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
-  if(!id||!name||!screenLines.length){showFormError('กรุณากรอก ID, Name และ Screens');return;}
-  if(FEATURES.some(f=>f.meta.id===id)){showFormError(`Feature ID "${id}" ซ้ำ`);return;}
-  const th=THEME_COLORS[theme]||THEME_COLORS.orange;
-  const screens={};screenLines.forEach((n,i)=>{screens[`S${i+1}`]={label:`Screen ${i+1}`,name:n,cssClass:`sc-${id}-s${i+1}`};});
-  const meta={id,name,emoji,color:th.color,colorBg:th.colorBg,colorBorder:th.colorBorder,tags:tagLines.map(l=>({label:l,style:th.badge})),description:desc||name,screens};
-  saveCustomFeature({meta});FEATURES=buildFeatures();injectScreenStyles();closeModal();rebuildNav();switchTab(id);updateHeaderStrip();
+async function submitAddFeature() {
+  const id = document.getElementById('ff-id').value.trim().replace(/\s+/g, '-').toLowerCase();
+  const emoji = document.getElementById('ff-emoji').value.trim() || '📋';
+  const name = document.getElementById('ff-name').value.trim();
+  const desc = document.getElementById('ff-desc').value.trim();
+  const theme = document.getElementById('ff-color').value;
+  const screenLines = document.getElementById('ff-screens').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const tagLines = document.getElementById('ff-tags').value.split(',').map(s => s.trim()).filter(Boolean);
+  if (!id || !name || !screenLines.length) { showFormError('กรุณากรอก ID, Name และ Screens'); return; }
+  if (FEATURES.some(f => f.meta.id === id)) { showFormError(`Feature ID "${id}" ซ้ำ`); return; }
+  const okBtn = document.querySelector('.btn-modal-ok');
+  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลังสร้าง...'; }
+  const th = THEME_COLORS[theme] || THEME_COLORS.orange;
+  const screens = {}; screenLines.forEach((n, i) => { screens[`S${i + 1}`] = { label: `Screen ${i + 1}`, name: n, cssClass: `sc-${id}-s${i + 1}` }; });
+  const meta = { id, name, emoji, color: th.color, colorBg: th.colorBg, colorBorder: th.colorBorder, tags: tagLines.map(l => ({ label: l, style: th.badge })), description: desc || name, screens };
+  try {
+    await saveCustomFeature({ meta });
+    FEATURES = buildFeatures(); injectScreenStyles(); closeModal(); rebuildNav(); switchTab(id); updateHeaderStrip();
+  } catch (err) {
+    showFormError(`สร้างไม่สำเร็จ: ${err.message}`);
+    if (okBtn) { okBtn.disabled = false; okBtn.textContent = 'สร้าง Feature'; }
+  }
 }
 
-function openModal(id,html){
-  let o=document.getElementById('modal-overlay');
-  if(!o){o=document.createElement('div');o.id='modal-overlay';o.className='modal-overlay';o.onclick=e=>{if(e.target===o)closeModal();};document.body.appendChild(o);}
-  o.innerHTML=`<div class="modal-box" id="${id}">${html}</div>`;
-  o.style.display='flex';requestAnimationFrame(()=>o.classList.add('open'));
+function openModal(id, html) {
+  let o = document.getElementById('modal-overlay');
+  if (!o) { o = document.createElement('div'); o.id = 'modal-overlay'; o.className = 'modal-overlay'; o.onclick = e => { if (e.target === o) closeModal(); }; document.body.appendChild(o); }
+  o.innerHTML = `<div class="modal-box" id="${id}">${html}</div>`;
+  o.style.display = 'flex'; requestAnimationFrame(() => o.classList.add('open'));
 }
-function openConfirmModal(title,body,fn){
-  openModal('confirm-modal',`
+function openConfirmModal(title, body, fn) {
+  openModal('confirm-modal', `
     <div class="modal-header"><span class="modal-title">${title}</span></div>
     <div class="modal-body"><p style="font-size:14px;line-height:1.6;">${body}</p></div>
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
       <button class="btn-modal-danger" id="confirm-ok-btn">ลบ</button>
     </div>`);
-  document.getElementById('confirm-ok-btn').onclick=()=>{closeModal();fn();};
+  document.getElementById('confirm-ok-btn').onclick = () => { closeModal(); fn(); };
 }
-function closeModal(){
-  const o=document.getElementById('modal-overlay');
-  if(o){o.classList.remove('open');setTimeout(()=>o.style.display='none',200);}
+function closeModal() {
+  const o = document.getElementById('modal-overlay');
+  if (o) { o.classList.remove('open'); setTimeout(() => o.style.display = 'none', 200); }
 }
-function showFormError(msg){
-  let e=document.getElementById('form-error');
-  if(!e){e=document.createElement('div');e.id='form-error';e.className='form-error';document.querySelector('.modal-footer')?.before(e);}
-  e.textContent=msg;e.style.display='block';
-}
-
-function resetAllStatus(){
-  if(!confirm('Reset ทุก status กลับเป็น No Run?'))return;
-  localStorage.removeItem(LS_STATUS);updateHeaderStrip();
-  if(currentFeatureId==='overview')renderOverview();
-  else{const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(f)renderFeature(f);}
+function showFormError(msg) {
+  let e = document.getElementById('form-error');
+  if (!e) { e = document.createElement('div'); e.id = 'form-error'; e.className = 'form-error'; document.querySelector('.modal-footer')?.before(e); }
+  e.textContent = msg; e.style.display = 'block';
 }
 
-document.addEventListener('DOMContentLoaded',init);
+async function resetAllStatus() {
+  if (!confirm('Reset ทุก status กลับเป็น No Run?')) return;
+  showLoadingOverlay('กำลัง reset...');
+  await resetAllStatusDB();
+  hideLoadingOverlay();
+  updateHeaderStrip();
+  if (currentFeatureId === 'overview') renderOverview();
+  else { const f = FEATURES.find(f => f.meta.id === currentFeatureId); if (f) renderFeature(f); }
+}
+
+document.addEventListener('DOMContentLoaded', init);
