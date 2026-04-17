@@ -4,8 +4,8 @@
 // ══════════════════════════════════════════
 //  🔧 CONFIG — ใส่ค่า Supabase ของคุณที่นี่
 // ══════════════════════════════════════════
-const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+const SUPABASE_URL = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NjQxNjEwNCwiZXhwIjoyMDkxOTkyMTA0fQ.Iwjjbe8ibiKcV1J0q8pejlbK2YFIfvxczO8BRg6pTKU';
 
 // ══════════════════════════════════════════
 //  Supabase client (ใช้ REST API โดยตรง)
