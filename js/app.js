@@ -1,163 +1,28 @@
-// ── QA TEST CASES — MAIN APP v5 ──
-// Auth: Supabase (email/password)
-// Data: Shared Google Drive via Supabase Edge Function
+// ── QA TEST CASES — v7 ──
+// Auth : Supabase (email/password)  → ตรวจสอบว่าเป็น user ที่อนุญาต
+// Data : Google Drive (testbulk87@gmail.com) → ทุกคนอ่าน/เขียน folder เดียวกัน
+//        แต่ละ feature = ไฟล์ JSON แยก  /qa-testcases/<featureId>.json
+//        รูปภาพ        = /qa-testcases/images/<caseId>/<filename>
 
 // ══════════════════════════════════════════
-//  🔧 CONFIG — แก้ค่าเหล่านี้ก่อนใช้งาน
+//  🔧 CONFIG
 // ══════════════════════════════════════════
 const SUPABASE_URL      = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MTYxMDQsImV4cCI6MjA5MTk5MjEwNH0.pgkW0qdi4EDz5h5lju_eoNY7oWIvw6fpvTBzO7YQB_E';
-const DRIVE_PROXY_URL   = `${SUPABASE_URL}/functions/v1/drive-proxy`;
-const DEBUG_LOG_LIMIT   = 25;
+const GOOGLE_CLIENT_ID  = '403194325485-pqib1qjnqjbqlj9ftki70s2d4jpoui20.apps.googleusercontent.com';
 
-function createDefaultDb() {
-  return { version:1, status:{}, customFeatures:[], customCases:{}, deletedCases:[] };
-}
+// Drive scope: drive.file = access to files created by this app only
+// แต่เราต้องการ folder กลาง → ต้องใช้ drive scope เต็ม หรือ share folder แล้วใช้ drive.file
+// ใช้ drive scope เพื่อให้เข้าถึง shared folder ได้
+const DRIVE_SCOPE    = 'https://www.googleapis.com/auth/drive';
+const DRIVE_API      = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD   = 'https://www.googleapis.com/upload/drive/v3';
+const DRIVE_FOLDER   = 'qa-testcases';   // folder name ใน Drive ของ testbulk87@gmail.com
 
-const DEBUG_STATE = {
-  startedAt: new Date().toISOString(),
-  lastError: null,
-  lastResponse: null,
-  logs: [],
-};
-
-function maskToken(token) {
-  if (!token) return '(missing)';
-  if (token.length <= 18) return `${token.slice(0, 6)}...(${token.length})`;
-  return `${token.slice(0, 10)}...${token.slice(-6)} (len ${token.length})`;
-}
-
-function decodeJwtMeta(token) {
-  if (!token || token.split('.').length < 2) return null;
-  try {
-    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(base64.length + ((4 - base64.length % 4) % 4), '=');
-    const json = decodeURIComponent(atob(padded).split('').map(c => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join(''));
-    const payload = JSON.parse(json);
-    return {
-      sub: payload.sub || null,
-      email: payload.email || null,
-      role: payload.role || null,
-      exp: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function sanitizeDebugData(value) {
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      status: value.status,
-      code: value.code,
-      errorCode: value.errorCode,
-      requestId: value.requestId,
-      region: value.region,
-      stage: value.stage,
-      ok: value.ok,
-      payload: sanitizeDebugData(value.payload),
-      details: value.details,
-    };
-  }
-  if (Array.isArray(value)) return value.map(sanitizeDebugData);
-  if (!value || typeof value !== 'object') return value;
-
-  const out = {};
-  Object.entries(value).forEach(([key, val]) => {
-    if (typeof val === 'string' && key.toLowerCase().includes('token')) {
-      out[key] = maskToken(val);
-    } else {
-      out[key] = sanitizeDebugData(val);
-    }
-  });
-  return out;
-}
-
-function recordDebug(event, data = {}) {
-  DEBUG_STATE.logs.unshift({
-    at: new Date().toISOString(),
-    event,
-    data: sanitizeDebugData(data),
-  });
-  DEBUG_STATE.logs = DEBUG_STATE.logs.slice(0, DEBUG_LOG_LIMIT);
-  renderDebugOutputs();
-}
-
-function buildError(message, meta = {}) {
-  const err = new Error(message);
-  Object.assign(err, meta);
-  return err;
-}
-
-function getSessionDebugInfo() {
-  const accessToken = localStorage.getItem('qa_access_token');
-  const refreshToken = localStorage.getItem('qa_refresh_token');
-  return {
-    location: window.location.href,
-    origin: window.location.origin,
-    hasAccessToken: !!accessToken,
-    accessToken: maskToken(accessToken),
-    accessTokenMeta: decodeJwtMeta(accessToken),
-    hasRefreshToken: !!refreshToken,
-    refreshToken: maskToken(refreshToken),
-    refreshTokenMeta: decodeJwtMeta(refreshToken),
-  };
-}
-
-function getDebugReport() {
-  return {
-    generatedAt: new Date().toISOString(),
-    startedAt: DEBUG_STATE.startedAt,
-    driveProxyUrl: DRIVE_PROXY_URL,
-    syncStatusText: document.getElementById('drive-sync-status')?.textContent || null,
-    browser: {
-      online: navigator.onLine,
-      userAgent: navigator.userAgent,
-      language: navigator.language,
-      secureContext: window.isSecureContext,
-    },
-    session: getSessionDebugInfo(),
-    lastResponse: DEBUG_STATE.lastResponse,
-    lastError: DEBUG_STATE.lastError,
-    logs: DEBUG_STATE.logs,
-  };
-}
-
-function formatDebugReport() {
-  return JSON.stringify(getDebugReport(), null, 2);
-}
-
-function escapeHtml(str = '') {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderDebugOutputs() {
-  const text = formatDebugReport();
-  ['drive-debug-output', 'db-debug-output'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-  });
-}
-
-async function copyDebugReport() {
-  const text = formatDebugReport();
-  try {
-    await navigator.clipboard.writeText(text);
-    recordDebug('debug-copy-success');
-  } catch (err) {
-    recordDebug('debug-copy-failed', { message: err?.message || String(err) });
-    alert('คัดลอก debug report ไม่สำเร็จ');
-  }
-}
-
-window.copyDebugReport = copyDebugReport;
+// ── Google Drive ที่ใช้เป็น "shared" คือต้อง share folder กับ user ที่จะใช้งาน
+// วิธีตั้งค่า: ไปที่ Drive ของ testbulk87@gmail.com → สร้างโฟลเดอร์ "qa-testcases"
+//              → Share กับ user อื่นๆ ที่ต้องการ (เป็น Editor)
+// แอพจะหา folder นั้นโดยชื่อเสมอ (หา folder ที่ชื่อ qa-testcases ที่ share มาให้)
 
 // ══════════════════════════════════════════
 //  SUPABASE AUTH
@@ -169,7 +34,6 @@ async function handleLogin() {
   const btn      = document.getElementById('btn-login');
   errEl.style.display = 'none';
   if (!email || !password) { errEl.textContent = 'กรุณากรอก Email และ Password'; errEl.style.display = 'block'; return; }
-  recordDebug('login-start', { email, hasPassword: !!password });
   btn.textContent = 'กำลังเข้าสู่ระบบ...'; btn.disabled = true;
   try {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -180,21 +44,8 @@ async function handleLogin() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
     localStorage.setItem('qa_access_token', d.access_token);
-    if (d.refresh_token) localStorage.setItem('qa_refresh_token', d.refresh_token);
-    recordDebug('login-success', {
-      userId: d.user?.id || null,
-      accessTokenMeta: decodeJwtMeta(d.access_token),
-      refreshTokenMeta: decodeJwtMeta(d.refresh_token),
-     });
-    showDriveStep('กำลังเชื่อมข้อมูลจาก Google Drive กลาง...');
-    await loadDriveData();
-    if (document.getElementById('login-overlay').style.display !== 'none') {
-      btn.textContent = 'เข้าสู่ระบบ';
-      btn.disabled = false;
-    }
+    showDriveStep();
   } catch (err) {
-    DEBUG_STATE.lastError = sanitizeDebugData(err);
-    recordDebug('login-failed', err);
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
     errEl.style.display = 'block';
     btn.textContent = 'เข้าสู่ระบบ'; btn.disabled = false;
@@ -202,388 +53,304 @@ async function handleLogin() {
 }
 
 function handleLogout() {
-  recordDebug('logout');
   localStorage.removeItem('qa_access_token');
-  localStorage.removeItem('qa_refresh_token');
-  clearTimeout(gWriteTimer);
-  DB_READY = false;
+  sessionStorage.removeItem('qa_google_token');
+  gAccessToken = null; gFolderId = null; DB_READY = false;
   location.reload();
 }
 
-function showLoginStep(message = '') {
-  const errEl = document.getElementById('login-error');
-  const btn   = document.getElementById('btn-login');
-  document.getElementById('step-login').style.display = 'block';
-  document.getElementById('step-drive').style.display = 'none';
-  document.getElementById('login-overlay').style.display = 'flex';
-  btn.textContent = 'เข้าสู่ระบบ';
-  btn.disabled = false;
-  if (message) {
-    errEl.textContent = message;
-    errEl.style.display = 'block';
-  } else {
-    errEl.textContent = '';
-    errEl.style.display = 'none';
-  }
-  recordDebug('show-login-step', { message });
-}
-
-function showDriveStep(message = 'กำลังเชื่อมข้อมูลจาก Google Drive กลาง...') {
-  document.getElementById('login-error').style.display = 'none';
+function showDriveStep() {
   document.getElementById('step-login').style.display = 'none';
   document.getElementById('step-drive').style.display = 'block';
-  document.getElementById('drive-sync-status').textContent = message;
-  recordDebug('show-drive-step', { message });
-  renderDebugOutputs();
 }
 
 // ══════════════════════════════════════════
-//  SHARED GOOGLE DRIVE PROXY
+//  GOOGLE DRIVE CLIENT
 // ══════════════════════════════════════════
-let gWriteTimer  = null;
+let gAccessToken = null;
+let gTokenClient = null;
+let gFolderId    = null;   // ID ของ folder qa-testcases
+let gImgFolderId = null;   // ID ของ folder images ภายใน qa-testcases
+let gWriteQueue  = {};     // featureId → setTimeout handle
 
-function getSupabaseToken() {
-  return localStorage.getItem('qa_access_token');
-}
-
-function isAuthErrorMessage(message = '') {
-  return [
-    'UNAUTHORIZED',
-    'Unauthorized',
-    'Invalid JWT',
-    'JWT',
-    'token',
-    'session',
-  ].some(keyword => message.includes(keyword));
-}
-
-async function refreshSupabaseSession() {
-  const refreshToken = localStorage.getItem('qa_refresh_token');
-  if (!refreshToken) return null;
-
-  recordDebug('refresh-session-start');
-  const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-    method: 'POST',
-    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+function onGISLoad() {
+  if (typeof google === 'undefined') return;
+  gTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: async (resp) => {
+      const btn = document.getElementById('btn-connect-drive');
+      if (resp.error) {
+        const errEl = document.getElementById('drive-connect-error');
+        if (errEl) { errEl.textContent = `Google error: ${resp.error}`; errEl.style.display = 'block'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'เชื่อมต่อ Google Drive'; }
+        document.getElementById('drive-expired-banner').style.display = 'flex';
+        return;
+      }
+      gAccessToken = resp.access_token;
+      sessionStorage.setItem('qa_google_token', resp.access_token);
+      if (btn) { btn.disabled = false; }
+      await loadAllData();
+    },
   });
+
+  const supToken = localStorage.getItem('qa_access_token');
+  const gToken   = sessionStorage.getItem('qa_google_token');
+  if (supToken && gToken) {
+    gAccessToken = gToken;
+    document.getElementById('login-overlay').style.display = 'none';
+    loadAllData();
+  } else if (supToken) {
+    document.getElementById('login-overlay').style.display = 'flex';
+    showDriveStep();
+  }
+}
+
+function requestGoogleToken() {
+  if (!gTokenClient) { alert('Google Identity Services ยังโหลดไม่เสร็จ'); return; }
+  const btn = document.getElementById('btn-connect-drive');
+  if (btn) { btn.disabled = true; btn.textContent = 'กำลังเชื่อมต่อ...'; }
+  gTokenClient.requestAccessToken({ prompt: '' });
+}
+
+function driveH(extra = {}) {
+  return { Authorization: `Bearer ${gAccessToken}`, ...extra };
+}
+
+// ── ค้นหา/สร้าง folder ──────────────────
+async function getOrCreateFolder(name, parentId = null) {
+  const parentQ = parentId ? ` and '${parentId}' in parents` : '';
+  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQ}`;
+  const r = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
+    headers: driveH()
+  });
+  if (r.status === 401) throw new Error('UNAUTHORIZED');
   const d = await r.json();
+  if (d.files && d.files.length > 0) return d.files[0].id;
 
-  if (!r.ok || !d.access_token) {
-    recordDebug('refresh-session-failed', { status: r.status, payload: d });
-    localStorage.removeItem('qa_access_token');
-    localStorage.removeItem('qa_refresh_token');
-    return null;
-  }
-
-  localStorage.setItem('qa_access_token', d.access_token);
-  if (d.refresh_token) localStorage.setItem('qa_refresh_token', d.refresh_token);
-  recordDebug('refresh-session-success', { accessTokenMeta: decodeJwtMeta(d.access_token) });
-  return d.access_token;
+  // สร้างใหม่
+  const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
+  if (parentId) meta.parents = [parentId];
+  const cr = await fetch(`${DRIVE_API}/files`, {
+    method: 'POST',
+    headers: driveH({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(meta),
+  });
+  if (!cr.ok) throw new Error(`Create folder failed: ${cr.status}`);
+  return (await cr.json()).id;
 }
 
-async function driveRequest(method = 'GET', body, allowRetry = true) {
-  const token = getSupabaseToken();
-  if (!token) throw new Error('UNAUTHORIZED');
-
-  const headers = {
-    Authorization: `Bearer ${token}`,
-    apikey: SUPABASE_ANON_KEY,
-  };
-  const opts = { method, headers };
-
-  if (typeof body !== 'undefined') {
-    headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-
-  recordDebug('drive-request-start', {
-    method,
-    allowRetry,
-    hasBody: typeof body !== 'undefined',
-    session: getSessionDebugInfo(),
-  });
-
-  let r;
-  try {
-    r = await fetch(DRIVE_PROXY_URL, opts);
-  } catch (err) {
-    const diagnosed = await diagnoseDriveProxyError(err, headers);
-    const wrapped = buildError(diagnosed.message, diagnosed);
-    DEBUG_STATE.lastError = sanitizeDebugData(wrapped);
-    recordDebug('drive-request-network-error', wrapped);
-    throw wrapped;
-  }
-
-  const responseMeta = {
-    method,
-    status: r.status,
-    ok: r.ok,
-    requestId: r.headers.get('sb-request-id'),
-    errorCode: r.headers.get('sb-error-code'),
-    region: r.headers.get('x-sb-edge-region'),
-  };
-  DEBUG_STATE.lastResponse = responseMeta;
-  recordDebug('drive-request-response', responseMeta);
-
-  if (r.status === 401 && allowRetry) {
-    const refreshedToken = await refreshSupabaseSession();
-    if (refreshedToken) return driveRequest(method, body, false);
-  }
-  if (r.status === 401) {
-    const text = await r.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch {}
-    const err = buildError(data?.message || data?.error || 'UNAUTHORIZED', {
-      ...responseMeta,
-      payload: data,
-    });
-    DEBUG_STATE.lastError = sanitizeDebugData(err);
-    recordDebug('drive-request-unauthorized', err);
-    throw err;
-  }
-
-  const text = await r.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!r.ok) {
-    const err = buildError(data?.error || data?.message || `Drive sync failed: ${r.status}`, {
-      ...responseMeta,
-      payload: data,
-    });
-    DEBUG_STATE.lastError = sanitizeDebugData(err);
-    recordDebug('drive-request-failed', err);
-    throw err;
-  }
-
-  DEBUG_STATE.lastError = null;
-  recordDebug('drive-request-success', {
-    ...responseMeta,
-    keys: data && typeof data === 'object' ? Object.keys(data) : null,
-  });
-  return data;
+// ── อ่าน/เขียน JSON ไฟล์ ────────────────
+async function driveReadJson(fileId) {
+  const r = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, { headers: driveH() });
+  if (r.status === 401) throw new Error('UNAUTHORIZED');
+  if (!r.ok) throw new Error(`Read failed: ${r.status}`);
+  return r.json();
 }
 
-async function diagnoseDriveProxyError(originalError, requestHeaders = {}) {
-  recordDebug('drive-proxy-diagnose-start', {
-    originalMessage: originalError?.message || String(originalError),
-    session: getSessionDebugInfo(),
+async function driveWriteJson(fileId, data) {
+  const r = await fetch(`${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: driveH({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
   });
-  try {
-    try {
-      const preflight = await fetch(DRIVE_PROXY_URL, {
-        method: 'OPTIONS',
-        headers: {
-          Origin: window.location.origin === 'null' ? 'null' : window.location.origin,
-          'Access-Control-Request-Method': 'GET',
-          'Access-Control-Request-Headers': 'authorization,apikey,content-type',
-        },
-      });
-      recordDebug('drive-proxy-diagnose-preflight', {
-        status: preflight.status,
-        ok: preflight.ok,
-      });
-      if (!preflight.ok) {
-        return {
-          message: `CORS preflight ไม่ผ่าน (${preflight.status})`,
-          status: preflight.status,
-          stage: 'preflight',
-        };
-      }
-    } catch (preflightError) {
-      recordDebug('drive-proxy-diagnose-preflight-error', {
-        message: preflightError?.message || String(preflightError),
-      });
-      return {
-        message: `Browser ส่ง OPTIONS ไป Supabase ไม่สำเร็จ: ${preflightError?.message || 'Unknown error'}`,
-        stage: 'preflight-network',
-      };
-    }
+  if (r.status === 401) { onDriveTokenExpired(); throw new Error('UNAUTHORIZED'); }
+  if (!r.ok) throw new Error(`Write failed: ${r.status}`);
+}
 
-    try {
-      const probe = await fetch(DRIVE_PROXY_URL, { method: 'GET', headers: requestHeaders });
-      const text = await probe.text();
-      let payload = null;
-      try { payload = text ? JSON.parse(text) : null; } catch {}
-      recordDebug('drive-proxy-diagnose-probe', {
-        status: probe.status,
-        ok: probe.ok,
-        requestId: probe.headers.get('sb-request-id'),
-        errorCode: probe.headers.get('sb-error-code'),
-        payload,
-      });
+async function driveCreateJson(name, parentId, data) {
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({ name, parents: [parentId] })], { type: 'application/json' }));
+  form.append('media', new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`, {
+    method: 'POST', headers: driveH(), body: form,
+  });
+  if (!r.ok) throw new Error(`Create file failed: ${r.status}`);
+  return (await r.json()).id;
+}
 
-      if (probe.status === 404) {
-        return {
-          message: 'ไม่พบ drive-proxy function บน Supabase (404) กรุณา deploy function ก่อน',
-          status: 404,
-          stage: 'probe',
-          payload,
-        };
-      }
-      if (probe.status === 401) {
-        return {
-          message: payload?.message || payload?.error || 'Supabase session หมดอายุหรือ token ไม่ถูกต้อง',
-          status: 401,
-          stage: 'probe',
-          payload,
-        };
-      }
-      if (!probe.ok) {
-        return {
-          message: payload?.error || payload?.message || `drive-proxy ตอบกลับด้วย status ${probe.status}`,
-          status: probe.status,
-          stage: 'probe',
-          payload,
-        };
-      }
-    } catch (probeError) {
-      recordDebug('drive-proxy-diagnose-probe-error', {
-        message: probeError?.message || String(probeError),
-      });
-    }
-  } catch (_) {
-    // Ignore probe failure and fall back to original message.
-  }
+async function driveFindFile(name, parentId) {
+  const q = `name='${name}' and '${parentId}' in parents and trashed=false`;
+  const r = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: driveH() });
+  if (r.status === 401) throw new Error('UNAUTHORIZED');
+  const d = await r.json();
+  return d.files?.[0]?.id || null;
+}
 
-  try {
-    const plain = await fetch(DRIVE_PROXY_URL, { method: 'GET' });
-    recordDebug('drive-proxy-diagnose-plain-get', {
-      status: plain.status,
-      ok: plain.ok,
-      requestId: plain.headers.get('sb-request-id'),
-      errorCode: plain.headers.get('sb-error-code'),
-    });
-  } catch (plainError) {
-    recordDebug('drive-proxy-diagnose-plain-get-error', {
-      message: plainError?.message || String(plainError),
-    });
-    return {
-      message: `Browser ไปไม่ถึง Supabase Functions endpoint เลย: ${plainError?.message || 'Unknown error'}`,
-      stage: 'endpoint-network',
-    };
-  }
-
+// ── Upload รูปภาพ ─────────────────────────
+async function driveUploadImage(file, caseId) {
+  // หรือสร้าง images/<caseId> folder
+  let caseFolderId = await getOrCreateFolder(caseId, gImgFolderId);
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify({
+    name: file.name,
+    parents: [caseFolderId],
+  })], { type: 'application/json' }));
+  form.append('media', file);
+  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink`, {
+    method: 'POST', headers: driveH(), body: form,
+  });
+  if (!r.ok) throw new Error(`Upload image failed: ${r.status}`);
+  const d = await r.json();
+  // Make file publicly readable
+  await fetch(`${DRIVE_API}/files/${d.id}/permissions`, {
+    method: 'POST',
+    headers: driveH({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+  });
   return {
-    message: originalError?.message || 'เชื่อมต่อ drive-proxy ไม่สำเร็จ',
-    stage: 'network',
+    id: d.id,
+    name: d.name,
+    url: `https://lh3.googleusercontent.com/d/${d.id}`,
+    viewUrl: d.webViewLink,
   };
 }
 
-// ── DRIVE API HELPERS ──────────────────────
-async function driveRead() {
-  return driveRequest('GET');
+async function driveDeleteFile(fileId) {
+  await fetch(`${DRIVE_API}/files/${fileId}`, { method: 'DELETE', headers: driveH() });
 }
 
-async function driveWrite() {
-  try {
-    await driveRequest('PUT', DB);
-    hideSavingIndicator();
-  } catch (e) {
-    hideSavingIndicator();
-    DEBUG_STATE.lastError = sanitizeDebugData(e);
-    recordDebug('drive-write-error', e);
-    if (isAuthErrorMessage(e?.message)) {
-      localStorage.removeItem('qa_access_token');
-      localStorage.removeItem('qa_refresh_token');
-      showLoginStep('Session หมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
-      return;
-    }
-    console.error('Drive write error:', e);
-  }
-}
-
-function scheduleWrite() {
-  showSavingIndicator();
-  clearTimeout(gWriteTimer);
-  gWriteTimer = setTimeout(driveWrite, 800);
+function onDriveTokenExpired() {
+  gAccessToken = null;
+  sessionStorage.removeItem('qa_google_token');
+  document.getElementById('drive-expired-banner').style.display = 'flex';
+  hideSavingIndicator();
 }
 
 // ══════════════════════════════════════════
-//  IN-MEMORY DB
+//  IN-MEMORY DB  (per-feature files)
 // ══════════════════════════════════════════
-let DB = createDefaultDb();
+// DB.features[featureId] = { meta, cases:[], fileId }
+// DB.status = { caseId: status }  → เก็บใน status.json
+// DB.deletedCases = [...]         → เก็บใน status.json ด้วย
+let DB = { features: {}, status: {}, deletedCases: [] };
 let DB_READY = false;
+let gStatusFileId = null;
 
-async function loadDriveData() {
-  showLoadingOverlay('กำลังโหลดข้อมูลจาก Shared Google Drive...');
-  recordDebug('drive-load-start');
+async function loadAllData() {
+  showLoadingOverlay('กำลังเชื่อมต่อ Google Drive...');
   try {
-    const data = await driveRead();
-    DB = {
-      version:        data.version        || 1,
-      status:         data.status         || {},
-      customFeatures: data.customFeatures || [],
-      customCases:    data.customCases    || {},
-      deletedCases:   Array.isArray(data.deletedCases) ? data.deletedCases : [],
-    };
+    // ค้นหา / สร้าง root folder
+    gFolderId    = await getOrCreateFolder(DRIVE_FOLDER);
+    gImgFolderId = await getOrCreateFolder('images', gFolderId);
+
+    // โหลด status.json
+    showLoadingOverlay('กำลังโหลด status...');
+    let statusId = await driveFindFile('status.json', gFolderId);
+    if (!statusId) {
+      statusId = await driveCreateJson('status.json', gFolderId, { status: {}, deletedCases: [] });
+    }
+    gStatusFileId = statusId;
+    const statusData = await driveReadJson(statusId);
+    DB.status       = statusData.status       || {};
+    DB.deletedCases = statusData.deletedCases || [];
+
+    // list ไฟล์ feature *.json (ยกเว้น status.json)
+    showLoadingOverlay('กำลังโหลด features...');
+    const q = `'${gFolderId}' in parents and name != 'status.json' and mimeType='application/json' and trashed=false`;
+    const lr = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, { headers: driveH() });
+    if (lr.status === 401) throw new Error('UNAUTHORIZED');
+    const listed = (await lr.json()).files || [];
+
+    DB.features = {};
+    await Promise.all(listed.map(async f => {
+      try {
+        const data = await driveReadJson(f.id);
+        const fid = data.meta?.id || f.name.replace('.json','');
+        DB.features[fid] = { meta: data.meta, cases: data.cases || [], fileId: f.id };
+      } catch {}
+    }));
+
     DB_READY = true;
     hideLoadingOverlay();
     document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('drive-expired-banner').style.display = 'none';
     document.getElementById('drive-status-badge').style.display = 'inline-flex';
-    recordDebug('drive-load-success', {
-      version: DB.version,
-      statusCount: Object.keys(DB.status).length,
-      customFeatureCount: DB.customFeatures.length,
-      customCaseFeatureCount: Object.keys(DB.customCases).length,
-    });
     init();
   } catch (err) {
     hideLoadingOverlay();
-    DEBUG_STATE.lastError = sanitizeDebugData(err);
-    recordDebug('drive-load-error', err);
-    if (isAuthErrorMessage(err?.message)) {
-      localStorage.removeItem('qa_access_token');
-      localStorage.removeItem('qa_refresh_token');
-      showLoginStep('Session หมดอายุ กรุณาเข้าสู่ระบบอีกครั้ง');
+    if (err.message === 'UNAUTHORIZED') {
+      onDriveTokenExpired();
+      document.getElementById('login-overlay').style.display = 'flex';
+      showDriveStep();
     } else {
       showDBError(err);
     }
   }
 }
 
-function bootstrapSession() {
-  if (!getSupabaseToken()) return;
-  recordDebug('bootstrap-session', { session: getSessionDebugInfo() });
-  showDriveStep('กำลังเชื่อมข้อมูลจาก Google Drive กลาง...');
-  loadDriveData();
+// ── schedule write per feature (debounce 800ms) ─
+function scheduleFeatureWrite(featureId) {
+  showSavingIndicator();
+  clearTimeout(gWriteQueue[featureId]);
+  gWriteQueue[featureId] = setTimeout(() => writeFeatureFile(featureId), 800);
 }
-
-// ── DB READ HELPERS ─────────────────────
-function getStatus(id)      { return DB.status[id] || 'no-run'; }
-function getCustomFeatures(){ return DB.customFeatures; }
-function getCustomCases(fid){ return DB.customCases[fid] || []; }
-function getDeletedCases()  { return new Set(DB.deletedCases); }
-
-// ── DB WRITE HELPERS (update + schedule Drive write) ─
-async function setStatus(id, st) {
-  DB.status[id] = st;
-  scheduleWrite();
+async function writeFeatureFile(featureId) {
+  const f = DB.features[featureId]; if (!f) return;
+  try {
+    if (!f.fileId) {
+      f.fileId = await driveCreateJson(`${featureId}.json`, gFolderId, { meta: f.meta, cases: f.cases });
+    } else {
+      await driveWriteJson(f.fileId, { meta: f.meta, cases: f.cases });
+    }
+    hideSavingIndicator();
+  } catch {}
 }
-async function saveCustomCase(fid, c) {
-  if (!DB.customCases[fid]) DB.customCases[fid] = [];
-  DB.customCases[fid].push(c);
-  scheduleWrite();
+function scheduleStatusWrite() {
+  showSavingIndicator();
+  clearTimeout(gWriteQueue['__status__']);
+  gWriteQueue['__status__'] = setTimeout(writeStatusFile, 800);
 }
-async function deleteCustomCase(fid, caseId) {
-  if (DB.customCases[fid]) DB.customCases[fid] = DB.customCases[fid].filter(c => c.id !== caseId);
-  if (!DB.deletedCases.includes(caseId)) DB.deletedCases.push(caseId);
-  scheduleWrite();
-}
-async function saveCustomFeature(f) {
-  DB.customFeatures.push(f);
-  scheduleWrite();
-}
-async function deleteCustomFeature(fid) {
-  DB.customFeatures = DB.customFeatures.filter(f => f.meta.id !== fid);
-  scheduleWrite();
-}
-async function resetAllStatusDB() {
-  DB.status = {};
-  scheduleWrite();
+async function writeStatusFile() {
+  try {
+    await driveWriteJson(gStatusFileId, { status: DB.status, deletedCases: DB.deletedCases });
+    hideSavingIndicator();
+  } catch {}
 }
 
 // ══════════════════════════════════════════
-//  LOADING / ERROR UI
+//  DB HELPERS
+// ══════════════════════════════════════════
+function getStatus(id)       { return DB.status[id] || 'no-run'; }
+function getDeletedSet()     { return new Set(DB.deletedCases); }
+
+async function setStatus(id, st) {
+  DB.status[id] = st;
+  scheduleStatusWrite();
+}
+
+// feature CRUD
+async function saveNewFeature(meta) {
+  DB.features[meta.id] = { meta, cases: [], fileId: null };
+  await writeFeatureFile(meta.id);
+}
+async function deleteFeatureData(featureId) {
+  const f = DB.features[featureId];
+  if (f?.fileId) await driveDeleteFile(f.fileId);
+  delete DB.features[featureId];
+}
+
+// case CRUD
+async function saveCase(featureId, c) {
+  const f = DB.features[featureId]; if (!f) return;
+  const idx = f.cases.findIndex(x => x.id === c.id);
+  if (idx >= 0) f.cases[idx] = c; else f.cases.push(c);
+  scheduleFeatureWrite(featureId);
+}
+async function deleteCaseData(featureId, caseId) {
+  const f = DB.features[featureId];
+  if (f) f.cases = f.cases.filter(c => c.id !== caseId);
+  if (!DB.deletedCases.includes(caseId)) DB.deletedCases.push(caseId);
+  scheduleFeatureWrite(featureId);
+  scheduleStatusWrite();
+}
+async function resetAllStatusDB() {
+  DB.status = {};
+  scheduleStatusWrite();
+}
+
+// ══════════════════════════════════════════
+//  LOADING / ERROR / SAVING UI
 // ══════════════════════════════════════════
 function showLoadingOverlay(msg = 'Loading...') {
   let el = document.getElementById('db-loading');
@@ -592,8 +359,7 @@ function showLoadingOverlay(msg = 'Loading...') {
     el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px;font-family:inherit;';
     document.body.appendChild(el);
   }
-  el.innerHTML = `
-    <div style="width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#4A3AB0;border-radius:50%;animation:spin .7s linear infinite;"></div>
+  el.innerHTML = `<div style="width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#4A3AB0;border-radius:50%;animation:spin .7s linear infinite;"></div>
     <div style="font-size:14px;color:#555;">${msg}</div>
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
   el.style.display = 'flex';
@@ -605,43 +371,22 @@ function showDBError(err) {
   let el = document.getElementById('db-loading');
   if (!el) { el = document.createElement('div'); el.id = 'db-loading'; document.body.appendChild(el); }
   el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;';
-  const msg = err?.message || 'Unknown error';
-  const setupHint = msg.includes('(404)')
-    ? 'ตอนนี้ endpoint ยังไม่เจอ ให้ deploy <code>drive-proxy</code> ไปที่ Supabase ก่อน'
-    : 'กรุณาตรวจสอบ <code>drive-proxy</code> function, <code>GOOGLE_SERVICE_ACCOUNT_JSON</code> และ <code>DRIVE_SHARED_FOLDER_ID</code>';
-  el.innerHTML = `
-    <div style="font-size:32px;">⚠️</div>
-    <div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Shared Google Drive ไม่ได้</div>
-    <div style="font-size:13px;color:#555;max-width:380px;text-align:center;line-height:1.6;">
-      ${setupHint}<br><br>
-      <em style="color:#888;">${msg}</em>
+  el.innerHTML = `<div style="font-size:32px;">⚠️</div>
+    <div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Google Drive ไม่ได้</div>
+    <div style="font-size:13px;color:#555;max-width:400px;text-align:center;line-height:1.6;">
+      ตรวจสอบ <b>GOOGLE_CLIENT_ID</b> และ Authorized origins ใน Google Cloud Console<br>
+      และตรวจสอบว่า folder <b>qa-testcases</b> ถูก share ให้ account ของคุณแล้ว<br><br>
+      <em style="color:#999;">${err.message}</em>
     </div>
-    <details class="debug-panel debug-panel-overlay" open>
-      <summary>Debug report</summary>
-      <pre id="db-debug-output" class="debug-output"></pre>
-      <button type="button" class="debug-copy-btn" onclick="copyDebugReport()">Copy debug</button>
-    </details>
-    <button onclick="location.reload()" style="margin-top:8px;padding:8px 20px;background:#4A3AB0;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">ลองใหม่</button>`;
+    <button onclick="location.reload()" style="padding:8px 20px;background:#4A3AB0;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">ลองใหม่</button>`;
   el.style.display = 'flex';
-  DEBUG_STATE.lastError = sanitizeDebugData(err);
-  renderDebugOutputs();
 }
-function showSavingIndicator() {
-  const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'flex';
-}
-function hideSavingIndicator() {
-  const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'none';
-}
+function showSavingIndicator() { const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'flex'; }
+function hideSavingIndicator() { const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'none'; }
 
 // ══════════════════════════════════════════
 //  APP CORE
 // ══════════════════════════════════════════
-const DATA_SOURCES = [
-  { metaVar: 'XRAY_META', casesVar: 'XRAY_CASES' },
-  // { metaVar: 'AUTH_META', casesVar: 'AUTH_CASES' },
-  // { metaVar: 'MY_META', casesVar: 'MY_CASES' },
-];
-
 const STATUSES = [
   { key:'no-run',    label:'No Run',    icon:'○', cssClass:'ss-norun',     filterClass:'active-st-norun'    },
   { key:'executing', label:'Executing', icon:'⟳', cssClass:'ss-executing', filterClass:'active-st-executing'},
@@ -654,8 +399,14 @@ const STATUS_COLORS = {
   'no-run':'#D5D3CE','executing':'#B5D0F0','passed':'#A8D49D',
   'failed':'#F5AAAA','blocked':'#F5D68A','cancelled':'#C5BCEF',
 };
-
-let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all';
+const THEME_COLORS = {
+  orange:{color:'#D95F02',colorBg:'#FFF4EC',colorBorder:'#F5C49A',badge:'badge-orange'},
+  blue:  {color:'#185FA5',colorBg:'#EAF2FB',colorBorder:'#B5D0F0',badge:'badge-blue'},
+  green: {color:'#276B1F',colorBg:'#EBF5E8',colorBorder:'#A8D49D',badge:'badge-green'},
+  purple:{color:'#4A3AB0',colorBg:'#F0EFFE',colorBorder:'#C5BCEF',badge:'badge-purple'},
+  teal:  {color:'#0F6B6B',colorBg:'#E6F5F5',colorBorder:'#8DD4D4',badge:'badge-teal'},
+  amber: {color:'#8A5200',colorBg:'#FFF8E6',colorBorder:'#F5D68A',badge:'badge-gray'},
+};
 const SCREEN_PALETTE=[
   {bg:'#F0EFFE',color:'#4A3AB0',border:'#C5BCEF'},{bg:'#EAF2FB',color:'#185FA5',border:'#B5D0F0'},
   {bg:'#FFF4EC',color:'#D95F02',border:'#F5C49A'},{bg:'#EBF5E8',color:'#276B1F',border:'#A8D49D'},
@@ -663,20 +414,15 @@ const SCREEN_PALETTE=[
 ];
 function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
 
-function buildFeatures(){
-  const deleted=getDeletedCases();
-  const builtIn=DATA_SOURCES
-    .filter(s=>typeof window[s.metaVar]!=='undefined')
-    .map(s=>{
-      const extra=getCustomCases(window[s.metaVar].id).filter(c=>!deleted.has(c.id));
-      const base=window[s.casesVar].filter(c=>!deleted.has(c.id)&&!extra.some(e=>e.id===c.id));
-      return{meta:window[s.metaVar],cases:[...base,...extra],custom:false};
-    });
-  const custom=getCustomFeatures().map(f=>{
-    const extra=getCustomCases(f.meta.id).filter(c=>!deleted.has(c.id));
-    return{meta:f.meta,cases:extra,custom:true};
-  });
-  return[...builtIn,...custom];
+let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all';
+
+function buildFeatures() {
+  const deleted = getDeletedSet();
+  return Object.values(DB.features).map(f => ({
+    meta: f.meta,
+    cases: f.cases.filter(c => !deleted.has(c.id)),
+    custom: true,
+  }));
 }
 
 function getStatusCounts(cases){
@@ -738,7 +484,7 @@ function buildNavTabs(){
   wrap.innerHTML=`
     <button class="nav-tab active" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>
     ${FEATURES.map(f=>`<button class="nav-tab" id="tab-${f.meta.id}" onclick="switchTab('${f.meta.id}')">${f.meta.emoji} ${f.meta.name} <span class="tab-count">${f.cases.length}</span></button>`).join('')}
-    <button class="nav-tab" id="tab-add-feature" onclick="openAddFeatureModal()" style="color:var(--orange);">＋ Feature</button>`;
+    <button class="nav-tab nav-tab-add" id="tab-add-feature" onclick="openAddFeatureModal()" style="color:var(--orange);">＋ Feature</button>`;
 }
 function rebuildNav(){
   FEATURES=buildFeatures();buildNavTabs();
@@ -784,10 +530,11 @@ function buildFeatureRow(f){
   const mini=STATUSES.filter(s=>counts[s.key]>0).map(s=>
     `<span class="ov-mini-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} ${counts[s.key]}</span>`
   ).join('')||`<span style="font-size:11px;color:var(--text3);">No Run</span>`;
-  const del=f.custom?`<button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteFeature('${f.meta.id}')" title="ลบ feature">🗑</button>`:'';
   return`<div class="ov-feature-row" onclick="switchTab('${f.meta.id}')">
     <div class="ov-feature-icon" style="background:${f.meta.colorBg};border-color:${f.meta.colorBorder};">${f.meta.emoji}</div>
-    <div class="ov-feature-info"><div class="ov-feature-name">${f.meta.name} ${del}</div>
+    <div class="ov-feature-info"><div class="ov-feature-name">${f.meta.name}
+      <button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteFeature('${f.meta.id}')" title="ลบ feature">🗑</button>
+    </div>
       <div class="ov-feature-desc">${f.meta.description}</div><div class="ov-feature-tags">${tags}</div></div>
     <div class="ov-feature-stats" id="ov-row-stats-${f.meta.id}">
       <div class="ov-stat-row">${mini}</div>
@@ -817,14 +564,17 @@ function renderFeature(feature){
     const cls=['active-purple','active-blue','active-orange','active-green','active-amber','active-teal'][i%6];
     return`<button class="filter-btn" onclick="setScreenFilter('${k}',this,'${cls}')">${sc.label} – ${sc.name}</button>`;
   }).join('');
-  const delFeat=feature.custom?`<button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>`:'';
   document.getElementById('main-content').innerHTML=`
     <div class="feature-header">
       <div style="font-size:24px;">${meta.emoji}</div>
       <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
         <div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
-      <div style="display:flex;gap:8px;align-items:flex-start;">${delFeat}
-        <button class="btn-add-case" onclick="openAddCaseModal('${meta.id}')">＋ Add test case</button></div>
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+        <button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>
+        <button class="btn-import-csv" onclick="openImportCsvModal('${meta.id}')">📥 Import CSV</button>
+        <button class="btn-export-csv" onclick="exportCsv('${meta.id}')">📤 Export CSV</button>
+        <button class="btn-add-case" onclick="openAddCaseModal('${meta.id}')">＋ Add case</button>
+      </div>
     </div>
     <div class="stats-grid">
       <div class="stat-card"><div class="num num-blue" id="s-total">—</div><div class="lbl">Total</div></div>
@@ -884,7 +634,7 @@ function applyFilters(){
     const typeOk=activeType==='all'||c.type===activeType;
     const screenOk=activeScreen==='all'||c.screen===activeScreen;
     const stOk=activeStatusFilt==='all'||getStatus(c.id)===activeStatusFilt;
-    const srchOk=!q||[c.title,c.sub,c.id,...c.steps,...c.expect].some(s=>s.toLowerCase().includes(q));
+    const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&s.toLowerCase().includes(q));
     return typeOk&&screenOk&&stOk&&srchOk;
   });
   renderTable(filtered,f);
@@ -896,17 +646,17 @@ function renderTable(list,feature){
   countEl.textContent=`${list.length} / ${feature.cases.length}`;
   emptyEl.style.display=list.length?'none':'block';
   if(!list.length){tbody.innerHTML='';return;}
-  const customIds=new Set(getCustomCases(feature.meta.id).map(c=>c.id));
   tbody.innerHTML=list.map(c=>{
     const sc=feature.meta.screens[c.screen];
     const typePill=`<span class="type-pill tp-${c.type}">${{positive:'✓ Positive',edge:'~ Edge',negative:'✗ Negative'}[c.type]||c.type}</span>`;
-    const screenTag=sc?`<span class="screen-tag ${sc.cssClass}">${sc.label}<br><small style="font-weight:400;opacity:.75;">${sc.name}</small></span>`:`<span class="screen-tag">${c.screen}</span>`;
-    const customBadge=customIds.has(c.id)?`<span style="font-size:10px;background:var(--orange-bg);color:var(--orange);border:1px solid var(--orange-border);padding:1px 6px;border-radius:10px;margin-left:4px;">custom</span>`:'';
+    const screenTag=sc?`<span class="screen-tag ${sc.cssClass}">${sc.label}<br><small style="font-weight:400;opacity:.75;">${sc.name}</small></span>`:`<span class="screen-tag">${c.screen||''}</span>`;
+    const imgCount=c.images?.length||0;
+    const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
     <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
-      <td class="col-title"><div class="tc-title-text">${c.title}${customBadge}</div><div class="tc-sub-text">${c.sub}</div></td>
+      <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>
       <td class="col-type hide-sm">${typePill}</td>
       <td class="col-status">${statusSelectHtml(c.id,feature.meta.id)}</td>
       <td class="col-actions"><button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteCase('${c.id}','${feature.meta.id}')" title="ลบ">🗑</button></td>
@@ -915,11 +665,29 @@ function renderTable(list,feature){
       <td colspan="6" style="padding:0 0 8px 0;">
         <div class="detail-inner">
           <div><div class="detail-section-title">Steps to reproduce</div>
-            <ol class="detail-list steps-list">${c.steps.map((s,i)=>`<li><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);margin-right:5px;">${i+1}.</strong>${s}</li>`).join('')}</ol>
+            <ol class="detail-list steps-list">${(c.steps||[]).map((s,i)=>`<li><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);margin-right:5px;">${i+1}.</strong>${s}</li>`).join('')}</ol>
           </div>
           <div><div class="detail-section-title">Expected behavior</div>
-            <ul class="detail-list expect-list">${c.expect.map(e=>`<li>${e}</li>`).join('')}</ul>
+            <ul class="detail-list expect-list">${(c.expect||[]).map(e=>`<li>${e}</li>`).join('')}</ul>
           </div>
+          ${imgCount>0?`<div style="grid-column:1/-1;">
+            <div class="detail-section-title">รูปภาพ (${imgCount})</div>
+            <div class="img-thumb-row">${c.images.map((img,i)=>`
+              <div class="img-thumb" onclick="openImageViewer('${c.id}','${feature.meta.id}',${i})">
+                <img src="${img.url}" alt="${img.name}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 60%22><rect width=%2280%22 height=%2260%22 fill=%22%23f0f0f0%22/><text x=%2240%22 y=%2235%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2212%22>img</text></svg>'" />
+                <span class="img-thumb-del" onclick="event.stopPropagation();confirmDeleteImage('${c.id}','${feature.meta.id}',${i})" title="ลบรูป">✕</span>
+              </div>`).join('')}
+              <label class="img-thumb img-thumb-add" title="เพิ่มรูป">
+                <input type="file" accept="image/*" multiple style="display:none" onchange="uploadImages(event,'${c.id}','${feature.meta.id}')">
+                <span style="font-size:22px;color:var(--text3);">＋</span>
+              </label>
+            </div>
+          </div>`:`<div style="grid-column:1/-1;">
+            <label class="btn-add-img" title="แนบรูปภาพ">
+              <input type="file" accept="image/*" multiple style="display:none" onchange="uploadImages(event,'${c.id}','${feature.meta.id}')">
+              🖼 แนบรูปภาพ
+            </label>
+          </div>`}
         </div>
       </td>
     </tr>`;
@@ -939,13 +707,260 @@ function updateTypeStats(cases){
   document.getElementById('s-neg').textContent=cases.filter(c=>c.type==='negative').length;
 }
 
-// ── DELETE ─────────────────────────────────
+// ══════════════════════════════════════════
+//  IMAGE UPLOAD & VIEWER
+// ══════════════════════════════════════════
+async function uploadImages(event, caseId, featureId) {
+  const files = Array.from(event.target.files);
+  if (!files.length) return;
+  showLoadingOverlay(`กำลังอัปโหลด ${files.length} รูป...`);
+  try {
+    const f = DB.features[featureId]; if (!f) return;
+    const c = f.cases.find(x => x.id === caseId); if (!c) return;
+    if (!c.images) c.images = [];
+    for (const file of files) {
+      const img = await driveUploadImage(file, caseId);
+      c.images.push(img);
+    }
+    await saveCase(featureId, c);
+    hideLoadingOverlay();
+    FEATURES = buildFeatures();
+    const feat = FEATURES.find(f => f.meta.id === featureId);
+    if (feat) renderFeature(feat);
+    // re-open detail
+    setTimeout(() => toggleDetail(caseId), 100);
+  } catch (err) {
+    hideLoadingOverlay();
+    alert('อัปโหลดรูปไม่สำเร็จ: ' + err.message);
+  }
+}
+
+function confirmDeleteImage(caseId, featureId, imgIndex) {
+  openConfirmModal('ลบรูปภาพ', 'ต้องการลบรูปนี้ออกใช่ไหม?', async () => {
+    const f = DB.features[featureId]; if (!f) return;
+    const c = f.cases.find(x => x.id === caseId); if (!c || !c.images) return;
+    const [removed] = c.images.splice(imgIndex, 1);
+    if (removed?.id) driveDeleteFile(removed.id).catch(() => {});
+    await saveCase(featureId, c);
+    FEATURES = buildFeatures();
+    const feat = FEATURES.find(f => f.meta.id === featureId);
+    if (feat) renderFeature(feat);
+    setTimeout(() => toggleDetail(caseId), 100);
+  });
+}
+
+function openImageViewer(caseId, featureId, startIndex = 0) {
+  const f = DB.features[featureId]; if (!f) return;
+  const c = f.cases.find(x => x.id === caseId); if (!c || !c.images?.length) return;
+  let cur = startIndex;
+  const imgs = c.images;
+
+  let overlay = document.getElementById('img-viewer-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'img-viewer-overlay';
+    overlay.className = 'img-viewer-overlay';
+    overlay.onclick = e => { if (e.target === overlay) closeImageViewer(); };
+    document.body.appendChild(overlay);
+  }
+
+  function render() {
+    overlay.innerHTML = `
+      <div class="img-viewer-box">
+        <div class="img-viewer-header">
+          <span style="font-size:13px;font-weight:600;">${imgs[cur].name}</span>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="font-size:12px;color:var(--text3);">${cur+1} / ${imgs.length}</span>
+            <a href="${imgs[cur].viewUrl||imgs[cur].url}" target="_blank" style="font-size:12px;color:var(--blue);">เปิดใน Drive ↗</a>
+            <button onclick="closeImageViewer()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);">✕</button>
+          </div>
+        </div>
+        <div class="img-viewer-body">
+          <button class="img-viewer-nav img-viewer-prev" onclick="imgViewerNav(-1)" ${cur===0?'disabled':''}>‹</button>
+          <img src="${imgs[cur].url}" alt="${imgs[cur].name}" class="img-viewer-img"
+            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 400 300%22><rect width=%22400%22 height=%22300%22 fill=%22%23f5f5f5%22/><text x=%22200%22 y=%22155%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2216%22>ไม่สามารถโหลดรูปได้</text></svg>'" />
+          <button class="img-viewer-nav img-viewer-next" onclick="imgViewerNav(1)" ${cur===imgs.length-1?'disabled':''}>›</button>
+        </div>
+        <div class="img-viewer-dots">
+          ${imgs.map((_,i)=>`<span class="img-viewer-dot ${i===cur?'active':''}" onclick="imgViewerGoTo(${i})"></span>`).join('')}
+        </div>
+      </div>`;
+    overlay.style.display = 'flex';
+  }
+
+  window.imgViewerNav = (d) => { cur = Math.max(0, Math.min(imgs.length-1, cur+d)); render(); };
+  window.imgViewerGoTo = (i) => { cur = i; render(); };
+  window.closeImageViewer = () => { overlay.style.display = 'none'; };
+
+  render();
+
+  // Keyboard nav
+  overlay._keyHandler = (e) => {
+    if (e.key === 'ArrowRight') imgViewerNav(1);
+    if (e.key === 'ArrowLeft')  imgViewerNav(-1);
+    if (e.key === 'Escape')     closeImageViewer();
+  };
+  document.removeEventListener('keydown', overlay._keyHandler);
+  document.addEventListener('keydown', overlay._keyHandler);
+}
+
+// ══════════════════════════════════════════
+//  CSV IMPORT / EXPORT
+// ══════════════════════════════════════════
+const CSV_HEADERS = ['id','type','screen','title','sub','steps','expect'];
+// steps & expect คั่นด้วย " | "
+
+function exportCsv(featureId) {
+  const f = DB.features[featureId]; if (!f) return;
+  const rows = [CSV_HEADERS];
+  f.cases.forEach(c => {
+    rows.push([
+      c.id, c.type, c.screen, c.title, c.sub||'',
+      (c.steps||[]).join(' | '),
+      (c.expect||[]).join(' | '),
+    ]);
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = `${featureId}-testcases.csv`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function openImportCsvModal(featureId) {
+  const f = DB.features[featureId]; if (!f) return;
+  openModal('import-csv-modal', `
+    <div class="modal-header"><span class="modal-title">📥 Import CSV</span><span class="modal-sub">${f.meta.emoji} ${f.meta.name}</span></div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--text2);background:var(--surface2);padding:12px;border-radius:8px;margin-bottom:4px;line-height:1.8;">
+        <strong>รูปแบบ CSV (UTF-8 with BOM):</strong><br>
+        คอลัมน์: <code>id, type, screen, title, sub, steps, expect</code><br>
+        • <b>type</b>: positive / edge / negative<br>
+        • <b>screen</b>: key จาก screens เช่น S1, S2<br>
+        • <b>steps</b> และ <b>expect</b>: คั่นหลายบรรทัดด้วย <code> | </code>
+      </div>
+      <div class="form-group">
+        <label>เลือกไฟล์ CSV</label>
+        <input type="file" id="csv-file-input" accept=".csv,text/csv" class="form-input" style="padding:6px;" />
+      </div>
+      <div id="csv-preview" style="display:none;">
+        <div class="detail-section-title" style="margin-bottom:6px;">Preview (10 แถวแรก)</div>
+        <div id="csv-preview-content" style="font-size:12px;max-height:200px;overflow-y:auto;background:var(--surface2);padding:10px;border-radius:8px;border:1px solid var(--border);"></div>
+        <div id="csv-stats" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>
+      </div>
+      <div id="csv-error" class="form-error" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn-modal-ok" id="btn-do-import" onclick="submitImportCsv('${featureId}')" disabled>Import</button>
+    </div>`);
+
+  document.getElementById('csv-file-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const text = await file.text();
+    parseCsvPreview(text, featureId);
+  });
+}
+
+let _csvParsed = [];
+function parseCsvPreview(text, featureId) {
+  const errEl = document.getElementById('csv-error');
+  errEl.style.display = 'none';
+  try {
+    const rows = parseCsvText(text);
+    if (rows.length < 2) throw new Error('ไฟล์ CSV ว่าง หรือไม่มีข้อมูล');
+    const headers = rows[0].map(h => h.trim().toLowerCase());
+    const required = ['id','type','title'];
+    const missing = required.filter(h => !headers.includes(h));
+    if (missing.length) throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);
+
+    _csvParsed = rows.slice(1).filter(r => r.some(v => v.trim())).map(row => {
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = (row[i] || '').trim());
+      return {
+        id: obj.id, type: obj.type||'positive', screen: obj.screen||'S1',
+        title: obj.title, sub: obj.sub||'',
+        steps: obj.steps ? obj.steps.split('|').map(s=>s.trim()).filter(Boolean) : [],
+        expect: obj.expect ? obj.expect.split('|').map(s=>s.trim()).filter(Boolean) : [],
+        images: [],
+      };
+    }).filter(c => c.id && c.title);
+
+    const preview = document.getElementById('csv-preview');
+    const content = document.getElementById('csv-preview-content');
+    const stats   = document.getElementById('csv-stats');
+    preview.style.display = 'block';
+    content.innerHTML = _csvParsed.slice(0,10).map(c =>
+      `<div style="padding:4px 0;border-bottom:1px solid var(--border);"><strong>${c.id}</strong> — ${c.title} <span style="color:var(--text3);">(${c.type})</span></div>`
+    ).join('');
+    stats.textContent = `รวม ${_csvParsed.length} test cases จะถูก import`;
+    document.getElementById('btn-do-import').disabled = false;
+  } catch (err) {
+    errEl.textContent = err.message; errEl.style.display = 'block';
+    document.getElementById('btn-do-import').disabled = true;
+    _csvParsed = [];
+  }
+}
+
+function parseCsvText(text) {
+  // handle BOM
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  const rows = []; let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"' && text[i+1] === '"') { field += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else field += ch;
+    } else {
+      if (ch === '"') inQ = true;
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n' || (ch === '\r' && text[i+1] === '\n')) {
+        row.push(field); field = '';
+        if (row.some(v=>v)) rows.push(row);
+        row = []; if (ch === '\r') i++;
+      } else field += ch;
+    }
+  }
+  if (field || row.length) { row.push(field); if (row.some(v=>v)) rows.push(row); }
+  return rows;
+}
+
+async function submitImportCsv(featureId) {
+  if (!_csvParsed.length) return;
+  const btn = document.getElementById('btn-do-import');
+  btn.disabled = true; btn.textContent = 'กำลัง import...';
+  try {
+    const f = DB.features[featureId]; if (!f) return;
+    let added = 0, skipped = 0;
+    for (const c of _csvParsed) {
+      if (f.cases.find(x => x.id === c.id)) { skipped++; continue; }
+      f.cases.push(c); added++;
+    }
+    await writeFeatureFile(featureId);
+    closeModal();
+    FEATURES = buildFeatures(); rebuildNav(); updateHeaderStrip();
+    const feat = FEATURES.find(f => f.meta.id === featureId);
+    if (feat) renderFeature(feat);
+    setTimeout(() => alert(`Import สำเร็จ: เพิ่ม ${added} cases${skipped?`, ข้าม ${skipped} (ID ซ้ำ)`:''}`)  ,100);
+  } catch (err) {
+    const errEl = document.getElementById('csv-error');
+    if (errEl) { errEl.textContent = 'Import ไม่สำเร็จ: ' + err.message; errEl.style.display = 'block'; }
+    btn.disabled = false; btn.textContent = 'Import';
+  }
+}
+
+// ══════════════════════════════════════════
+//  DELETE
+// ══════════════════════════════════════════
 function confirmDeleteCase(caseId,featureId){
   openConfirmModal('ลบ Test Case',
-    `ต้องการลบ <strong>${caseId}</strong> ออกใช่ไหม?<br><span style="color:var(--text2);font-size:12px;">Built-in case จะถูกซ่อน, Custom case จะถูกลบถาวร</span>`,
+    `ต้องการลบ <strong>${caseId}</strong> ออกใช่ไหม?`,
     async()=>{
       showLoadingOverlay('กำลังลบ...');
-      await deleteCustomCase(featureId,caseId);
+      await deleteCaseData(featureId,caseId);
       FEATURES=buildFeatures();hideLoadingOverlay();
       const f=FEATURES.find(f=>f.meta.id===featureId);
       if(f)renderFeature(f);else renderOverview();
@@ -955,21 +970,20 @@ function confirmDeleteCase(caseId,featureId){
 }
 function confirmDeleteFeature(featureId){
   const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
-  if(!f.custom){alert('Built-in feature ไม่สามารถลบจาก UI ได้\nลบไฟล์ data/*.js แล้ว refresh แทน');return;}
   openConfirmModal('ลบ Feature',
-    `ต้องการลบ <strong>${f.meta.emoji} ${f.meta.name}</strong> ทั้งหมดใช่ไหม?`,
+    `ต้องการลบ <strong>${f.meta.emoji} ${f.meta.name}</strong> ทั้งหมดใช่ไหม?<br><small style="color:var(--red);">ลบทุก test case และไฟล์ใน Drive</small>`,
     async()=>{
       showLoadingOverlay('กำลังลบ...');
-      f.cases.forEach(c=>delete DB.status[c.id]);
-      delete DB.customCases[featureId];
-      await deleteCustomFeature(featureId);
+      await deleteFeatureData(featureId);
       FEATURES=buildFeatures();currentFeatureId='overview';
       hideLoadingOverlay();rebuildNav();renderOverview();updateHeaderStrip();
     }
   );
 }
 
-// ── ADD CASE ──────────────────────────────
+// ══════════════════════════════════════════
+//  ADD CASE MODAL
+// ══════════════════════════════════════════
 function openAddCaseModal(featureId){
   const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
   const screenOptions=Object.entries(f.meta.screens).map(([k,sc])=>`<option value="${k}">${sc.label} – ${sc.name}</option>`).join('');
@@ -1008,11 +1022,11 @@ async function submitAddCase(featureId){
   const expect=document.getElementById('fc-expect').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!id||!title||!steps.length||!expect.length){showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ');return;}
   const f=FEATURES.find(f=>f.meta.id===featureId);
-  if(f&&f.cases.some(c=>c.id===id)){showFormError(`Case ID "${id}" ซ้ำกับที่มีอยู่แล้ว`);return;}
+  if(f&&f.cases.some(c=>c.id===id)){showFormError(`Case ID "${id}" ซ้ำ`);return;}
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
   try{
-    await saveCustomCase(featureId,{id,type,screen,title,sub,steps,expect});
+    await saveCase(featureId,{id,type,screen,title,sub,steps,expect,images:[]});
     FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
     const feat=FEATURES.find(f=>f.meta.id===featureId);if(feat)renderFeature(feat);
   }catch(err){
@@ -1021,7 +1035,9 @@ async function submitAddCase(featureId){
   }
 }
 
-// ── ADD FEATURE ───────────────────────────
+// ══════════════════════════════════════════
+//  ADD FEATURE MODAL
+// ══════════════════════════════════════════
 function openAddFeatureModal(){
   openModal('add-feature-modal',`
     <div class="modal-header"><span class="modal-title">＋ Add Feature</span><span class="modal-sub">สร้าง feature ใหม่</span></div>
@@ -1046,14 +1062,6 @@ function openAddFeatureModal(){
       <button class="btn-modal-ok" onclick="submitAddFeature()">สร้าง Feature</button>
     </div>`);
 }
-const THEME_COLORS={
-  orange:{color:'#D95F02',colorBg:'#FFF4EC',colorBorder:'#F5C49A',badge:'badge-orange'},
-  blue:  {color:'#185FA5',colorBg:'#EAF2FB',colorBorder:'#B5D0F0',badge:'badge-blue'},
-  green: {color:'#276B1F',colorBg:'#EBF5E8',colorBorder:'#A8D49D',badge:'badge-green'},
-  purple:{color:'#4A3AB0',colorBg:'#F0EFFE',colorBorder:'#C5BCEF',badge:'badge-purple'},
-  teal:  {color:'#0F6B6B',colorBg:'#E6F5F5',colorBorder:'#8DD4D4',badge:'badge-teal'},
-  amber: {color:'#8A5200',colorBg:'#FFF8E6',colorBorder:'#F5D68A',badge:'badge-gray'},
-};
 async function submitAddFeature(){
   const id=document.getElementById('ff-id').value.trim().replace(/\s+/g,'-').toLowerCase();
   const emoji=document.getElementById('ff-emoji').value.trim()||'📋';
@@ -1063,7 +1071,7 @@ async function submitAddFeature(){
   const screenLines=document.getElementById('ff-screens').value.split('\n').map(s=>s.trim()).filter(Boolean);
   const tagLines=document.getElementById('ff-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
   if(!id||!name||!screenLines.length){showFormError('กรุณากรอก ID, Name และ Screens');return;}
-  if(FEATURES.some(f=>f.meta.id===id)){showFormError(`Feature ID "${id}" ซ้ำ`);return;}
+  if(DB.features[id]){showFormError(`Feature ID "${id}" ซ้ำ`);return;}
   const th=THEME_COLORS[theme]||THEME_COLORS.orange;
   const screens={};screenLines.forEach((n,i)=>{screens[`S${i+1}`]={label:`Screen ${i+1}`,name:n,cssClass:`sc-${id}-s${i+1}`};});
   const meta={id,name,emoji,color:th.color,colorBg:th.colorBg,colorBorder:th.colorBorder,
@@ -1071,7 +1079,7 @@ async function submitAddFeature(){
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังสร้าง...';}
   try{
-    await saveCustomFeature({meta});
+    await saveNewFeature(meta);
     FEATURES=buildFeatures();injectScreenStyles();closeModal();rebuildNav();switchTab(id);updateHeaderStrip();
   }catch(err){
     showFormError(`สร้างไม่สำเร็จ: ${err.message}`);
@@ -1079,7 +1087,9 @@ async function submitAddFeature(){
   }
 }
 
-// ── MODAL ────────────────────────────────
+// ══════════════════════════════════════════
+//  MODAL HELPERS
+// ══════════════════════════════════════════
 function openModal(id,html){
   let o=document.getElementById('modal-overlay');
   if(!o){o=document.createElement('div');o.id='modal-overlay';o.className='modal-overlay';o.onclick=e=>{if(e.target===o)closeModal();};document.body.appendChild(o);}
@@ -1106,7 +1116,9 @@ function showFormError(msg){
   e.textContent=msg;e.style.display='block';
 }
 
-// ── RESET ─────────────────────────────────
+// ══════════════════════════════════════════
+//  RESET STATUS
+// ══════════════════════════════════════════
 async function resetAllStatus(){
   if(!confirm('Reset ทุก status กลับเป็น No Run?'))return;
   showLoadingOverlay('กำลัง reset...');
@@ -1116,6 +1128,3 @@ async function resetAllStatus(){
   if(currentFeatureId==='overview')renderOverview();
   else{const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(f)renderFeature(f);}
 }
-
-recordDebug('app-init', { session: getSessionDebugInfo() });
-bootstrapSession();

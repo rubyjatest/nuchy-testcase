@@ -1,0 +1,4 @@
+id,type,screen,title,sub,steps,expect
+TC-01,positive,S1,Login with valid credentials,Happy path login,เปิดแอป | ใส่ email และ password ที่ถูกต้อง | กด Login,เข้าสู่หน้า Home | แสดงชื่อ user ที่ header
+TC-02,negative,S1,Login with wrong password,Invalid credentials,เปิดแอป | ใส่ email ถูกต้อง แต่ password ผิด | กด Login,แสดง error message | ไม่มีการ redirect
+TC-03,edge,S2,Empty fields validation,Form validation before API call,เปิดแอป | กด Login โดยไม่กรอกข้อมูล,แสดง validation error ที่ทั้ง 2 fields | ไม่มี API call
