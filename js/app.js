@@ -1,6 +1,6 @@
 // ── QA TEST CASES — v7 ──
 // Auth : Supabase (email/password)  → ตรวจสอบว่าเป็น user ที่อนุญาต
-// Data : Google Drive (testbulk87@gmail.com) → ทุกคนอ่าน/เขียน folder เดียวกัน
+// Data : Google Drive (Service Account) → ทุกคนใช้ folder เดียวกันอัตโนมัติ
 //        แต่ละ feature = ไฟล์ JSON แยก  /qa-testcases/<featureId>.json
 //        รูปภาพ        = /qa-testcases/images/<caseId>/<filename>
 
@@ -9,20 +9,44 @@
 // ══════════════════════════════════════════
 const SUPABASE_URL      = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MTYxMDQsImV4cCI6MjA5MTk5MjEwNH0.pgkW0qdi4EDz5h5lju_eoNY7oWIvw6fpvTBzO7YQB_E';
-const GOOGLE_CLIENT_ID  = '403194325485-pqib1qjnqjbqlj9ftki70s2d4jpoui20.apps.googleusercontent.com';
 
-// Drive scope: drive.file = access to files created by this app only
-// แต่เราต้องการ folder กลาง → ต้องใช้ drive scope เต็ม หรือ share folder แล้วใช้ drive.file
-// ใช้ drive scope เพื่อให้เข้าถึง shared folder ได้
-const DRIVE_SCOPE    = 'https://www.googleapis.com/auth/drive';
-const DRIVE_API      = 'https://www.googleapis.com/drive/v3';
-const DRIVE_UPLOAD   = 'https://www.googleapis.com/upload/drive/v3';
-const DRIVE_FOLDER   = 'qa-testcases';   // folder name ใน Drive ของ testbulk87@gmail.com
+// ── Service Account สำหรับ Google Drive ─────────────────────────────────
+// folder "qa-testcases" ใน Drive ของ testbulk87@gmail.com
+// ถูก share ให้ service account นี้เป็น Editor แล้ว
+const SA_EMAIL   = 'qa-test-cases@nuchy-testcase.iam.gserviceaccount.com';
+const SA_KEY_ID  = 'deb69e16caf2b583b404b0a7e1f347753e53d765';
+const SA_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDDbLeF/dUaBFKz
+TUHZdLwoHuSoLL+KnEF2Pa6y84hCH/GeNzwujfd8PNH+JC8WysOu2qIgSjfvXH3Z
+YVVKgR/9ifnauUSYr2Renj8oSzd/TqkbBJNWlnwBXMkGivbnb/pgnpYHkpJA6vSI
+h/UU5im2Hn38cliE6chKRWdqTHAYWt/C1pKuYIACWd5Aqnon3cmRgtekJCIPbr8o
+/pZgJDiz7RMHMSqoJr4TlxQw8JMiJj6ZkMzfkf7bTi6ZOcMOR4kSPJ9wVp/vUrHc
+KWP+ifS2skCAlWbqBZjUiRQ7TEO6Vph4bs/vbtftfXcIFaiAB9EuxqflKVUms276
+b+LqsTz1AgMBAAECggEAAgfPUQSXxaInT2FJ13t97+Hkg4sLCjknvaLUGiNXiCcF
+0PHAFrf3PNSBK55w9iVi3JAvGWUfk8V/h0C+0GbAgfOc47T1NKvQ+OIKJ58w5Qof
+sVpzba6ctVh4n8zVuc3FxfA6jrrOpBt7FNoVOxjcAt4/dhb510HsJR1pYmOHtYZj
+h7GsZBZ8ndTMBH8TWTUdj+yiJ8sG2/1umwRKb3nqyuYmKewdhVfySpbRDaRv6N8U
+YAFULHIM18cEd6CR/7fHHoDgKq3EC2rxtJ/qMrrnxPBs/vJQsvZvIVScRsUgILss
+5+oVYjUj7j4F5SCASe7R/MHRonA4fCAltlyix1Cq9wKBgQDzSIvNscrBVEVzrPcS
+IYrHSL7NR6fr4vHolTAnYM6gHlt0iG+BjSrtOKsefiQH/BUufUVolgEcxKyOaAjT
+kqLWW3EuabtAWq38wM8poqiHTboeLe3fFbBGMjE/hEHyrWXK5e60mFNvqjzFWW+K
+EaDKmD4nOgm9aSKXm5qr/B1BhwKBgQDNo8IEgdzjrMaMIowNgLAp49rBXxG4GXSS
+vOhERMXsqC3oEhYFCk7Zh8aP36UXWFKNampHEbH7x8bGBmcGTrfJWmryX5X7/V7B
+bLM01RBr0YjwvuTm0awnIi30vIdGOQrWj69NNgkUfcBBjSp2qGIAVbvsR+1utyqv
+nvKHDFxcowKBgQDj7/WkrE62ollMDyOSJkEbhEnYlal8Ni7G5niufGI73RV88pPe
+wsAUcMLLGA50OLgzzYUpf1nddVvjNRAIAtx0kEpT3RZnLk7TgGbYsKDL3IRj4E59
+dJmquz4vL6CGWfYEizgClrGd7tdvY+NAblHDX67kG9miUI3rlAvv1ZAnowKBgDWf
+CttkBXY0uj0WURDASq9Ro9wibxtjP9t3eNU8XaPdIsNN3AIKcw8T8XnYplLVDAmm
+AvpvKcruh+1hBAJICnJtqk9zD0f7BHdJYd1X5YVHyP6FuGhbqhk2N2eGtXthKmtS
+YjKu8WUveS9eoQD53TwbHvp4svfYuT+8IZ+HYJojAoGAHRM345ZPd/fBS5mr1OuO
+7PGnO83qG/LqzQxuiC0POz/Pi8OtlxU87vLAJIh2LVhjcSTKl3k1o3gtMk0+V82N
+N65RX8C7VeYhunJOmgKDOOiCC+Q/yD+bk53bl+nMWjMzWNnVNvBFDvydgNBmWRDi
+ZLytyYYkEWtpjgVRb8rWxc8=
+-----END PRIVATE KEY-----`;
 
-// ── Google Drive ที่ใช้เป็น "shared" คือต้อง share folder กับ user ที่จะใช้งาน
-// วิธีตั้งค่า: ไปที่ Drive ของ testbulk87@gmail.com → สร้างโฟลเดอร์ "qa-testcases"
-//              → Share กับ user อื่นๆ ที่ต้องการ (เป็น Editor)
-// แอพจะหา folder นั้นโดยชื่อเสมอ (หา folder ที่ชื่อ qa-testcases ที่ share มาให้)
+const DRIVE_API    = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+const DRIVE_FOLDER = 'qa-testcases';  // folder ที่ share ให้ service account แล้ว
 
 // ══════════════════════════════════════════
 //  SUPABASE AUTH
@@ -44,7 +68,8 @@ async function handleLogin() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
     localStorage.setItem('qa_access_token', d.access_token);
-    showDriveStep();
+    // ── auto-connect Drive ด้วย Service Account ทันที ──
+    await connectDriveWithServiceAccount();
   } catch (err) {
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
     errEl.style.display = 'block';
@@ -54,64 +79,102 @@ async function handleLogin() {
 
 function handleLogout() {
   localStorage.removeItem('qa_access_token');
-  sessionStorage.removeItem('qa_google_token');
-  gAccessToken = null; gFolderId = null; DB_READY = false;
+  gAccessToken = null; gFolderId = null; DB_READY = false; saTokenExpiry = 0;
   location.reload();
 }
 
-function showDriveStep() {
-  document.getElementById('step-login').style.display = 'none';
-  document.getElementById('step-drive').style.display = 'block';
+function retryDriveConnect() {
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  connectDriveWithServiceAccount();
 }
 
 // ══════════════════════════════════════════
-//  GOOGLE DRIVE CLIENT
+//  GOOGLE DRIVE — SERVICE ACCOUNT
 // ══════════════════════════════════════════
 let gAccessToken = null;
-let gTokenClient = null;
 let gFolderId    = null;   // ID ของ folder qa-testcases
 let gImgFolderId = null;   // ID ของ folder images ภายใน qa-testcases
 let gWriteQueue  = {};     // featureId → setTimeout handle
+let saTokenExpiry = 0;     // timestamp ms ที่ token จะหมดอายุ
 
-function onGISLoad() {
-  if (typeof google === 'undefined') return;
-  gTokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: DRIVE_SCOPE,
-    callback: async (resp) => {
-      const btn = document.getElementById('btn-connect-drive');
-      if (resp.error) {
-        const errEl = document.getElementById('drive-connect-error');
-        if (errEl) { errEl.textContent = `Google error: ${resp.error}`; errEl.style.display = 'block'; }
-        if (btn) { btn.disabled = false; btn.textContent = 'เชื่อมต่อ Google Drive'; }
-        document.getElementById('drive-expired-banner').style.display = 'flex';
-        return;
-      }
-      gAccessToken = resp.access_token;
-      sessionStorage.setItem('qa_google_token', resp.access_token);
-      if (btn) { btn.disabled = false; }
-      await loadAllData();
-    },
+// ── สร้าง JWT และขอ access token จาก Google ──
+async function getServiceAccountToken() {
+  // ยังใช้ได้อยู่ (เหลือ > 5 นาที) → ไม่ต้อง refresh
+  if (gAccessToken && Date.now() < saTokenExpiry - 300_000) return;
+
+  const now = Math.floor(Date.now() / 1000);
+  const header  = { alg: 'RS256', typ: 'JWT', kid: SA_KEY_ID };
+  const payload = {
+    iss: SA_EMAIL,
+    scope: 'https://www.googleapis.com/auth/drive',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+
+  // base64url encode
+  const b64url = obj =>
+    btoa(JSON.stringify(obj))
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+  const signingInput = `${b64url(header)}.${b64url(payload)}`;
+
+  // import private key
+  const pemStripped = SA_PRIVATE_KEY
+    .replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '');
+  const keyBytes = Uint8Array.from(atob(pemStripped), c => c.charCodeAt(0));
+  const cryptoKey = await crypto.subtle.importKey(
+    'pkcs8', keyBytes,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+    false, ['sign']
+  );
+
+  // sign
+  const sigBuf = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5', cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+  const sig = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
+    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+  const jwt = `${signingInput}.${sig}`;
+
+  // แลก JWT → access token
+  const resp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
   });
+  if (!resp.ok) {
+    const e = await resp.json().catch(() => ({}));
+    throw new Error(`Service account auth failed: ${e.error_description || resp.status}`);
+  }
+  const data = await resp.json();
+  gAccessToken  = data.access_token;
+  saTokenExpiry = Date.now() + data.expires_in * 1000;
+}
 
-  const supToken = localStorage.getItem('qa_access_token');
-  const gToken   = sessionStorage.getItem('qa_google_token');
-  if (supToken && gToken) {
-    gAccessToken = gToken;
-    document.getElementById('login-overlay').style.display = 'none';
-    loadAllData();
-  } else if (supToken) {
-    document.getElementById('login-overlay').style.display = 'flex';
-    showDriveStep();
+// ── เรียกตอน page load (ถ้ามี Supabase token อยู่แล้ว) หรือหลัง login ──
+async function connectDriveWithServiceAccount() {
+  showLoadingOverlay('กำลังเชื่อมต่อ Google Drive...');
+  try {
+    await getServiceAccountToken();
+    await loadAllData();
+  } catch (err) {
+    hideLoadingOverlay();
+    showDBError(err);
   }
 }
 
-function requestGoogleToken() {
-  if (!gTokenClient) { alert('Google Identity Services ยังโหลดไม่เสร็จ'); return; }
-  const btn = document.getElementById('btn-connect-drive');
-  if (btn) { btn.disabled = true; btn.textContent = 'กำลังเชื่อมต่อ...'; }
-  gTokenClient.requestAccessToken({ prompt: '' });
-}
+// ── page init: ถ้ายังมี Supabase session อยู่ → auto-connect ──
+(async () => {
+  const supToken = localStorage.getItem('qa_access_token');
+  if (supToken) {
+    document.getElementById('login-overlay').style.display = 'flex';
+    await connectDriveWithServiceAccount();
+  }
+})();
 
 function driveH(extra = {}) {
   return { Authorization: `Bearer ${gAccessToken}`, ...extra };
@@ -121,9 +184,10 @@ function driveH(extra = {}) {
 async function getOrCreateFolder(name, parentId = null) {
   const parentQ = parentId ? ` and '${parentId}' in parents` : '';
   const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQ}`;
-  const r = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
-    headers: driveH()
-  });
+  const r = await fetch(
+    `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&includeItemsFromAllDrives=true&supportsAllDrives=true`,
+    { headers: driveH() }
+  );
   if (r.status === 401) throw new Error('UNAUTHORIZED');
   const d = await r.json();
   if (d.files && d.files.length > 0) return d.files[0].id;
@@ -131,7 +195,7 @@ async function getOrCreateFolder(name, parentId = null) {
   // สร้างใหม่
   const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
   if (parentId) meta.parents = [parentId];
-  const cr = await fetch(`${DRIVE_API}/files`, {
+  const cr = await fetch(`${DRIVE_API}/files?supportsAllDrives=true`, {
     method: 'POST',
     headers: driveH({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(meta),
@@ -149,7 +213,7 @@ async function driveReadJson(fileId) {
 }
 
 async function driveWriteJson(fileId, data) {
-  const r = await fetch(`${DRIVE_UPLOAD}/files/${fileId}?uploadType=media`, {
+  const r = await fetch(`${DRIVE_UPLOAD}/files/${fileId}?uploadType=media&supportsAllDrives=true`, {
     method: 'PATCH',
     headers: driveH({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(data),
@@ -162,7 +226,7 @@ async function driveCreateJson(name, parentId, data) {
   const form = new FormData();
   form.append('metadata', new Blob([JSON.stringify({ name, parents: [parentId] })], { type: 'application/json' }));
   form.append('media', new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id`, {
+  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id&supportsAllDrives=true`, {
     method: 'POST', headers: driveH(), body: form,
   });
   if (!r.ok) throw new Error(`Create file failed: ${r.status}`);
@@ -171,7 +235,10 @@ async function driveCreateJson(name, parentId, data) {
 
 async function driveFindFile(name, parentId) {
   const q = `name='${name}' and '${parentId}' in parents and trashed=false`;
-  const r = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)`, { headers: driveH() });
+  const r = await fetch(
+    `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&includeItemsFromAllDrives=true&supportsAllDrives=true`,
+    { headers: driveH() }
+  );
   if (r.status === 401) throw new Error('UNAUTHORIZED');
   const d = await r.json();
   return d.files?.[0]?.id || null;
@@ -187,7 +254,7 @@ async function driveUploadImage(file, caseId) {
     parents: [caseFolderId],
   })], { type: 'application/json' }));
   form.append('media', file);
-  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink`, {
+  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink&supportsAllDrives=true`, {
     method: 'POST', headers: driveH(), body: form,
   });
   if (!r.ok) throw new Error(`Upload image failed: ${r.status}`);
@@ -207,14 +274,17 @@ async function driveUploadImage(file, caseId) {
 }
 
 async function driveDeleteFile(fileId) {
-  await fetch(`${DRIVE_API}/files/${fileId}`, { method: 'DELETE', headers: driveH() });
+  await fetch(`${DRIVE_API}/files/${fileId}?supportsAllDrives=true`, { method: 'DELETE', headers: driveH() });
 }
 
-function onDriveTokenExpired() {
-  gAccessToken = null;
-  sessionStorage.removeItem('qa_google_token');
-  document.getElementById('drive-expired-banner').style.display = 'flex';
+async function onDriveTokenExpired() {
+  // Service account token หมดอายุ → ขอใหม่อัตโนมัติ แทนที่จะให้ user กดเอง
   hideSavingIndicator();
+  try {
+    await getServiceAccountToken();
+  } catch {
+    document.getElementById('drive-expired-banner').style.display = 'flex';
+  }
 }
 
 // ══════════════════════════════════════════
@@ -248,7 +318,7 @@ async function loadAllData() {
     // list ไฟล์ feature *.json (ยกเว้น status.json)
     showLoadingOverlay('กำลังโหลด features...');
     const q = `'${gFolderId}' in parents and name != 'status.json' and mimeType='application/json' and trashed=false`;
-    const lr = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, { headers: driveH() });
+    const lr = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&includeItemsFromAllDrives=true&supportsAllDrives=true`, { headers: driveH() });
     if (lr.status === 401) throw new Error('UNAUTHORIZED');
     const listed = (await lr.json()).files || [];
 
@@ -270,9 +340,10 @@ async function loadAllData() {
   } catch (err) {
     hideLoadingOverlay();
     if (err.message === 'UNAUTHORIZED') {
-      onDriveTokenExpired();
+      await onDriveTokenExpired();
+      // ลอง loadAllData อีกครั้งถ้า token refresh สำเร็จ
+      if (gAccessToken) { await loadAllData(); return; }
       document.getElementById('login-overlay').style.display = 'flex';
-      showDriveStep();
     } else {
       showDBError(err);
     }
@@ -374,8 +445,8 @@ function showDBError(err) {
   el.innerHTML = `<div style="font-size:32px;">⚠️</div>
     <div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Google Drive ไม่ได้</div>
     <div style="font-size:13px;color:#555;max-width:400px;text-align:center;line-height:1.6;">
-      ตรวจสอบ <b>GOOGLE_CLIENT_ID</b> และ Authorized origins ใน Google Cloud Console<br>
-      และตรวจสอบว่า folder <b>qa-testcases</b> ถูก share ให้ account ของคุณแล้ว<br><br>
+      ตรวจสอบว่า folder <b>qa-testcases</b> ถูก share ให้ service account<br>
+      <b>qa-test-cases@nuchy-testcase.iam.gserviceaccount.com</b> แล้ว (เป็น Editor)<br><br>
       <em style="color:#999;">${err.message}</em>
     </div>
     <button onclick="location.reload()" style="padding:8px 20px;background:#4A3AB0;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">ลองใหม่</button>`;
