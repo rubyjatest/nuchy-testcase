@@ -61,10 +61,24 @@
       <div class="header-status-strip" id="hdr-status-strip"></div>
       <div class="header-actions">
         <span id="drive-status-badge" class="drive-badge" title="เชื่อมต่อ Google Drive แล้ว" style="display:none;">📁 Drive</span>
-        <button class="btn-reset btn-theme" id="theme-toggle-btn" onclick="toggleTheme()">🌙 Dark</button>
-        <button class="btn-reset" onclick="openDriveDiagnostics()">Drive Debug</button>
-        <button class="btn-reset btn-logout" onclick="handleLogout()">Logout</button>
-        <button class="btn-reset" onclick="resetAllStatus()">↺ Reset</button>
+        <div class="settings-menu-wrap">
+          <button
+            class="btn-reset btn-settings"
+            id="settings-menu-btn"
+            type="button"
+            onclick="toggleSettingsMenu(event)"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="settings-menu-list"
+            title="เมนูตั้งค่า"
+          >⚙️</button>
+          <div class="settings-menu" id="settings-menu-list" role="menu" aria-labelledby="settings-menu-btn" hidden>
+            <button class="settings-menu-item btn-theme" type="button" role="menuitem" id="theme-toggle-btn" onclick="handleSettingsAction(toggleTheme)">🌙 Dark</button>
+            <button class="settings-menu-item" type="button" role="menuitem" onclick="handleSettingsAction(openDriveDiagnostics)">Drive Debug</button>
+            <button class="settings-menu-item btn-logout" type="button" role="menuitem" onclick="handleSettingsAction(handleLogout)">Logout</button>
+            <button class="settings-menu-item" type="button" role="menuitem" onclick="handleSettingsAction(resetAllStatus)">↺ Reset</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

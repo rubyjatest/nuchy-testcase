@@ -179,6 +179,59 @@ body {
 .btn-logout:hover { background: var(--red-bg); color: var(--red); }
 .btn-theme { min-width: 90px; }
 
+.settings-menu-wrap { position: relative; }
+.btn-settings {
+  min-width: 42px;
+  padding: 5px 10px;
+  font-size: 16px;
+  line-height: 1;
+}
+.settings-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 170px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 130;
+}
+.settings-menu[hidden] { display: none; }
+.settings-menu-item {
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-menu-item:hover {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: var(--border);
+}
+.settings-menu-item.btn-theme { min-width: 0; }
+.settings-menu-item.btn-logout {
+  color: var(--red);
+  border-color: transparent;
+}
+.settings-menu-item.btn-logout:hover {
+  background: var(--red-bg);
+  color: var(--red);
+  border-color: var(--red-border);
+}
+
 /* ── NAV TABS ── */
 .nav-tabs-wrap {
   background: var(--surface);
@@ -624,6 +677,7 @@ body {
   .site-subtitle { display: none; }
   .header-actions { margin-left: auto; }
   .btn-reset { padding: 5px 10px; }
+  .settings-menu { right: 0; min-width: 156px; }
   .list-toolbar { justify-content: stretch; }
   .list-toolbar-item { width: 100%; justify-content: space-between; }
   .sort-select { min-width: 0; width: 100%; max-width: 220px; }

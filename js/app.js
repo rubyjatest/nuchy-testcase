@@ -207,6 +207,51 @@ async function buildAuthHeaders(extra = {}) {
   return headers;
 }
 
+function getSettingsMenuElements() {
+  return {
+    wrap: document.querySelector('.settings-menu-wrap'),
+    button: document.getElementById('settings-menu-btn'),
+    menu: document.getElementById('settings-menu-list'),
+  };
+}
+
+function closeSettingsMenu() {
+  const { button, menu } = getSettingsMenuElements();
+  if (!menu) return;
+  menu.hidden = true;
+  if (button) button.setAttribute('aria-expanded', 'false');
+}
+
+function openSettingsMenu() {
+  const { button, menu } = getSettingsMenuElements();
+  if (!menu) return;
+  menu.hidden = false;
+  if (button) button.setAttribute('aria-expanded', 'true');
+}
+
+function toggleSettingsMenu(event) {
+  if (event) event.stopPropagation();
+  const { menu } = getSettingsMenuElements();
+  if (!menu) return;
+  if (menu.hidden) openSettingsMenu();
+  else closeSettingsMenu();
+}
+
+function handleSettingsAction(action) {
+  closeSettingsMenu();
+  if (typeof action === 'function') action();
+}
+
+document.addEventListener('click', (event) => {
+  const { wrap, menu } = getSettingsMenuElements();
+  if (!wrap || !menu || menu.hidden) return;
+  if (!wrap.contains(event.target)) closeSettingsMenu();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeSettingsMenu();
+});
+
 function updateThemeToggleButton() {
   const btn = document.getElementById('theme-toggle-btn');
   if (!btn) return;
