@@ -882,9 +882,8 @@ Deno.serve(async (req) => {
   const action = (url.searchParams.get("action") || "bootstrap").trim();
 
   try {
-    // Auth disabled for production
-    // const user = await requireSupabaseUser(req);
-    // if (!user) return jsonResponse({ error: "Unauthorized" }, 401);
+    const user = await requireSupabaseUser(req);
+    if (!user) return jsonResponse({ error: "Unauthorized" }, 401);
 
     if (req.method === "GET" && action === "diagnostics") {
       const includeWriteCheck = url.searchParams.get("writeCheck") === "1";

@@ -11,6 +11,13 @@
 const SUPABASE_URL      = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MTYxMDQsImV4cCI6MjA5MTk5MjEwNH0.pgkW0qdi4EDz5h5lju_eoNY7oWIvw6fpvTBzO7YQB_E';
 const DRIVE_PROXY_URL   = `${SUPABASE_URL}/functions/v1/drive-proxy`;
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    storageKey: 'qa-supabase-auth',
+  },
+});
 
 const APP_MODE = {
   DRIVE: 'drive',
@@ -148,8 +155,56 @@ function seedBundledData() {
   });
 }
 
-function getAccessToken() {
-  return localStorage.getItem('qa_access_token') || '';
+function decodeJwtPayload(token) {
+  try {
+    const base64Url = String(token || '').split('.')[1] || '';
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+}
+
+async function getValidAccessToken(forceRefresh = false) {
+  let sessionResponse = await supabaseClient.auth.getSession();
+  let session = sessionResponse?.data?.session || null;
+
+  if (forceRefresh && session?.refresh_token) {
+    const refreshed = await supabaseClient.auth.refreshSession({ refresh_token: session.refresh_token });
+    if (refreshed.error) throw refreshed.error;
+    session = refreshed.data.session || null;
+  }
+
+  if (!session) {
+    const legacyToken = localStorage.getItem('qa_access_token') || '';
+    if (legacyToken) {
+      const payload = decodeJwtPayload(legacyToken);
+      const isExpired = !payload?.exp || (payload.exp * 1000) <= (Date.now() + 60_000);
+      if (!isExpired) return legacyToken;
+      localStorage.removeItem('qa_access_token');
+    }
+    return '';
+  }
+
+  if (!forceRefresh && session.expires_at && (session.expires_at * 1000) <= (Date.now() + 60_000)) {
+    const refreshed = await supabaseClient.auth.refreshSession({ refresh_token: session.refresh_token });
+    if (refreshed.error) throw refreshed.error;
+    session = refreshed.data.session || null;
+  }
+
+  const token = session?.access_token || '';
+  if (token) localStorage.setItem('qa_access_token', token);
+  return token;
+}
+
+async function buildAuthHeaders(extra = {}) {
+  const headers = new Headers(extra);
+  headers.set('apikey', SUPABASE_ANON_KEY);
+  const token = await getValidAccessToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return headers;
 }
 
 function updateThemeToggleButton() {
@@ -194,14 +249,6 @@ function getInitialSortMode() {
 initTheme();
 activeSortMode = getInitialSortMode();
 
-function buildAuthHeaders(extra = {}) {
-  const headers = new Headers(extra);
-  headers.set('apikey', SUPABASE_ANON_KEY);
-  const token = getAccessToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  return headers;
-}
-
 async function driveProxyRequest(action, {
   method = 'GET',
   body,
@@ -216,21 +263,36 @@ async function driveProxyRequest(action, {
     }
   });
 
-  const headers = buildAuthHeaders();
-  const options = { method, headers };
+  const sendRequest = async (forceRefresh = false) => {
+    const headers = await buildAuthHeaders();
+    if (forceRefresh) {
+      const token = await getValidAccessToken(true);
+      headers.set('apikey', SUPABASE_ANON_KEY);
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+    }
 
-  if (formData) {
-    options.body = formData;
-  } else if (body !== undefined) {
-    headers.set('Content-Type', 'application/json');
-    options.body = JSON.stringify(body);
+    const options = { method, headers };
+
+    if (formData) {
+      options.body = formData;
+    } else if (body !== undefined) {
+      headers.set('Content-Type', 'application/json');
+      options.body = JSON.stringify(body);
+    }
+
+    const res = await fetch(url.toString(), options);
+    const contentType = res.headers.get('content-type') || '';
+    const payload = contentType.includes('application/json')
+      ? await res.json().catch(() => ({}))
+      : await res.text().catch(() => '');
+
+    return { res, payload };
+  };
+
+  let { res, payload } = await sendRequest(false);
+  if (res.status === 401) {
+    ({ res, payload } = await sendRequest(true));
   }
-
-  const res = await fetch(url.toString(), options);
-  const contentType = res.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json')
-    ? await res.json().catch(() => ({}))
-    : await res.text().catch(() => '');
 
   if (!res.ok) {
     const err = new Error(payload?.error || payload?.message || `Drive proxy failed (${res.status})`);
@@ -463,14 +525,11 @@ async function handleLogin() {
   btn.textContent = 'กำลังเข้าสู่ระบบ...';
   btn.disabled = true;
   try {
-    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
-    localStorage.setItem('qa_access_token', d.access_token);
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    const token = data?.session?.access_token || '';
+    if (!token) throw new Error('Login failed: session not found');
+    localStorage.setItem('qa_access_token', token);
     await connectDriveWithServiceAccount();
   } catch (err) {
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
@@ -480,7 +539,10 @@ async function handleLogin() {
   }
 }
 
-function handleLogout() {
+async function handleLogout() {
+  try {
+    await supabaseClient.auth.signOut();
+  } catch {}
   localStorage.removeItem('qa_access_token');
   currentAppMode = APP_MODE.DRIVE;
   lastDriveError = null;
@@ -504,12 +566,25 @@ async function connectDriveWithServiceAccount() {
 }
 
 (async () => {
-  const supToken = getAccessToken();
-  if (supToken) {
-    document.getElementById('login-overlay').style.display = 'flex';
-    await connectDriveWithServiceAccount();
+  try {
+    const token = await getValidAccessToken();
+    if (token) {
+      document.getElementById('login-overlay').style.display = 'flex';
+      await connectDriveWithServiceAccount();
+    }
+  } catch (err) {
+    console.warn('Unable to restore session', err);
+    localStorage.removeItem('qa_access_token');
   }
 })();
+
+supabaseClient.auth.onAuthStateChange((_event, session) => {
+  if (session?.access_token) {
+    localStorage.setItem('qa_access_token', session.access_token);
+  } else {
+    localStorage.removeItem('qa_access_token');
+  }
+});
 
 async function persistFeatureFile(featureId) {
   const f = DB.features[featureId];
