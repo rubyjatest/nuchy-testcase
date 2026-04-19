@@ -11,13 +11,6 @@
 const SUPABASE_URL      = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MTYxMDQsImV4cCI6MjA5MTk5MjEwNH0.pgkW0qdi4EDz5h5lju_eoNY7oWIvw6fpvTBzO7YQB_E';
 const DRIVE_PROXY_URL   = `${SUPABASE_URL}/functions/v1/drive-proxy`;
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    storageKey: 'qa-supabase-auth',
-  },
-});
 
 const APP_MODE = {
   DRIVE: 'drive',
@@ -31,6 +24,7 @@ let gWriteQueue = {};
 let DB = { features: {}, status: {}, deletedCases: [], executions: {} };
 let DB_READY = false;
 let currentTheme = 'light';
+let activeSortMode = 'id-asc';
 let DRIVE_STATE = {
   rootFolderId: null,
   rootFolderName: '',
@@ -39,13 +33,7 @@ let DRIVE_STATE = {
   statusFileId: null,
 };
 
-const APP_RUNTIME = {
-  bootstrapping: false,
-  connecting: false,
-  resetting: false,
-  initialized: false,
-  activeRequestId: 0,
-};
+const SORT_MODES = ['id-asc', 'id-desc', 'title-asc', 'title-desc'];
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
@@ -160,102 +148,9 @@ function seedBundledData() {
   });
 }
 
-function decodeJwtPayload(token) {
-  try {
-    const base64Url = String(token || '').split('.')[1] || '';
-    if (!base64Url) return null;
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
-    return JSON.parse(atob(padded));
-  } catch {
-    return null;
-  }
+function getAccessToken() {
+  return localStorage.getItem('qa_access_token') || '';
 }
-
-async function getValidAccessToken(forceRefresh = false) {
-  let sessionResponse = await supabaseClient.auth.getSession();
-  let session = sessionResponse?.data?.session || null;
-
-  if (forceRefresh && session?.refresh_token) {
-    const refreshed = await supabaseClient.auth.refreshSession({ refresh_token: session.refresh_token });
-    if (refreshed.error) throw refreshed.error;
-    session = refreshed.data.session || null;
-  }
-
-  if (!session) {
-    const legacyToken = localStorage.getItem('qa_access_token') || '';
-    if (legacyToken) {
-      const payload = decodeJwtPayload(legacyToken);
-      const isExpired = !payload?.exp || (payload.exp * 1000) <= (Date.now() + 60_000);
-      if (!isExpired) return legacyToken;
-      localStorage.removeItem('qa_access_token');
-    }
-    return '';
-  }
-
-  if (!forceRefresh && session.expires_at && (session.expires_at * 1000) <= (Date.now() + 60_000)) {
-    const refreshed = await supabaseClient.auth.refreshSession({ refresh_token: session.refresh_token });
-    if (refreshed.error) throw refreshed.error;
-    session = refreshed.data.session || null;
-  }
-
-  const token = session?.access_token || '';
-  if (token) localStorage.setItem('qa_access_token', token);
-  return token;
-}
-
-async function buildAuthHeaders(extra = {}) {
-  const headers = new Headers(extra);
-  headers.set('apikey', SUPABASE_ANON_KEY);
-  const token = await getValidAccessToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-  return headers;
-}
-
-function getSettingsMenuElements() {
-  return {
-    wrap: document.querySelector('.settings-menu-wrap'),
-    button: document.getElementById('settings-menu-btn'),
-    menu: document.getElementById('settings-menu-list'),
-  };
-}
-
-function closeSettingsMenu() {
-  const { button, menu } = getSettingsMenuElements();
-  if (!menu) return;
-  menu.hidden = true;
-  if (button) button.setAttribute('aria-expanded', 'false');
-}
-
-function openSettingsMenu() {
-  const { button, menu } = getSettingsMenuElements();
-  if (!menu) return;
-  menu.hidden = false;
-  if (button) button.setAttribute('aria-expanded', 'true');
-}
-
-function toggleSettingsMenu(event) {
-  if (event) event.stopPropagation();
-  const { menu } = getSettingsMenuElements();
-  if (!menu) return;
-  if (menu.hidden) openSettingsMenu();
-  else closeSettingsMenu();
-}
-
-function handleSettingsAction(action) {
-  closeSettingsMenu();
-  if (typeof action === 'function') action();
-}
-
-document.addEventListener('click', (event) => {
-  const { wrap, menu } = getSettingsMenuElements();
-  if (!wrap || !menu || menu.hidden) return;
-  if (!wrap.contains(event.target)) closeSettingsMenu();
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeSettingsMenu();
-});
 
 function updateThemeToggleButton() {
   const btn = document.getElementById('theme-toggle-btn');
@@ -291,9 +186,21 @@ function toggleTheme() {
   setTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
+function getInitialSortMode() {
+  const saved = (localStorage.getItem('qa_sort_mode') || '').trim();
+  return SORT_MODES.includes(saved) ? saved : 'id-asc';
+}
 
 initTheme();
-activeSortMode = '';
+activeSortMode = getInitialSortMode();
+
+function buildAuthHeaders(extra = {}) {
+  const headers = new Headers(extra);
+  headers.set('apikey', SUPABASE_ANON_KEY);
+  const token = getAccessToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return headers;
+}
 
 async function driveProxyRequest(action, {
   method = 'GET',
@@ -309,36 +216,21 @@ async function driveProxyRequest(action, {
     }
   });
 
-  const sendRequest = async (forceRefresh = false) => {
-    const headers = await buildAuthHeaders();
-    if (forceRefresh) {
-      const token = await getValidAccessToken(true);
-      headers.set('apikey', SUPABASE_ANON_KEY);
-      if (token) headers.set('Authorization', `Bearer ${token}`);
-    }
+  const headers = buildAuthHeaders();
+  const options = { method, headers };
 
-    const options = { method, headers };
-
-    if (formData) {
-      options.body = formData;
-    } else if (body !== undefined) {
-      headers.set('Content-Type', 'application/json');
-      options.body = JSON.stringify(body);
-    }
-
-    const res = await fetch(url.toString(), options);
-    const contentType = res.headers.get('content-type') || '';
-    const payload = contentType.includes('application/json')
-      ? await res.json().catch(() => ({}))
-      : await res.text().catch(() => '');
-
-    return { res, payload };
-  };
-
-  let { res, payload } = await sendRequest(false);
-  if (res.status === 401) {
-    ({ res, payload } = await sendRequest(true));
+  if (formData) {
+    options.body = formData;
+  } else if (body !== undefined) {
+    headers.set('Content-Type', 'application/json');
+    options.body = JSON.stringify(body);
   }
+
+  const res = await fetch(url.toString(), options);
+  const contentType = res.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await res.json().catch(() => ({}))
+    : await res.text().catch(() => '');
 
   if (!res.ok) {
     const err = new Error(payload?.error || payload?.message || `Drive proxy failed (${res.status})`);
@@ -516,10 +408,13 @@ async function useBundledFallback(err) {
     } catch {}
   }
   seedBundledData();
-  DB_READY = false;
-  resetUiState({ keepDiagnostic: true });
+  hideLoadingOverlay();
+  hideSavingIndicator();
   showFallbackBanner(buildErrorMessage(err));
-  syncAppView();
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  document.getElementById('drive-status-badge').style.display = 'none';
+  init();
 }
 
 function ensureWritable() {
@@ -554,90 +449,6 @@ function rememberExecutorName(name) {
   localStorage.setItem('qa_executor_name_list', JSON.stringify(next));
 }
 
-function clearPendingWrites() {
-  Object.values(gWriteQueue).forEach(handle => clearTimeout(handle));
-  gWriteQueue = {};
-}
-
-function resetUiState({ keepDiagnostic = false } = {}) {
-  clearPendingWrites();
-  hideLoadingOverlay();
-  hideSavingIndicator();
-  hideFallbackBanner();
-  document.getElementById('drive-expired-banner').style.display = 'none';
-  document.getElementById('drive-status-badge').style.display = 'none';
-  if (!keepDiagnostic) lastDriveDiagnostic = null;
-  lastDriveError = null;
-}
-
-function applyDrivePayload(payload) {
-  DRIVE_STATE = {
-    rootFolderId: payload.rootFolderId || null,
-    rootFolderName: payload.rootFolderName || '',
-    featuresFolderId: payload.featuresFolderId || null,
-    imagesFolderId: payload.imagesFolderId || null,
-    statusFileId: payload.statusFileId || null,
-  };
-
-  DB = {
-    features: {},
-    status: payload.status || {},
-    deletedCases: payload.deletedCases || [],
-    executions: payload.executions || {},
-  };
-
-  (payload.features || []).forEach(feature => {
-    const featureId = feature.featureId || feature.meta?.id;
-    if (!featureId) return;
-    DB.features[featureId] = {
-      meta: feature.meta,
-      cases: feature.cases || [],
-      fileId: feature.fileId || null,
-    };
-  });
-}
-
-function renderAppShell() {
-  document.getElementById('login-overlay').style.display = 'none';
-  document.getElementById('drive-expired-banner').style.display = 'none';
-  document.getElementById('drive-status-badge').style.display = currentAppMode === APP_MODE.DRIVE ? 'inline-flex' : 'none';
-  init();
-  APP_RUNTIME.initialized = true;
-}
-
-function syncAppView() {
-  if (!APP_RUNTIME.initialized) {
-    renderAppShell();
-    return;
-  }
-  FEATURES = buildFeatures();
-  rebuildNav();
-  updateHeaderStrip();
-  if (currentFeatureId === 'overview') {
-    renderOverview();
-    return;
-  }
-  const feature = FEATURES.find(item => item.meta.id === currentFeatureId);
-  if (feature) {
-    renderFeature(feature);
-  } else {
-    currentFeatureId = 'overview';
-    renderOverview();
-  }
-}
-
-function beginAsyncFlow(flowName) {
-  const requestId = ++APP_RUNTIME.activeRequestId;
-  APP_RUNTIME[flowName] = true;
-  return requestId;
-}
-
-function endAsyncFlow(flowName, requestId) {
-  if (APP_RUNTIME.activeRequestId === requestId) {
-    APP_RUNTIME[flowName] = false;
-  }
-}
-
 async function handleLogin() {
   const email    = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
@@ -652,11 +463,14 @@ async function handleLogin() {
   btn.textContent = 'กำลังเข้าสู่ระบบ...';
   btn.disabled = true;
   try {
-    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    const token = data?.session?.access_token || '';
-    if (!token) throw new Error('Login failed: session not found');
-    localStorage.setItem('qa_access_token', token);
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
+    localStorage.setItem('qa_access_token', d.access_token);
     await connectDriveWithServiceAccount();
   } catch (err) {
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
@@ -666,10 +480,7 @@ async function handleLogin() {
   }
 }
 
-async function handleLogout() {
-  try {
-    await supabaseClient.auth.signOut();
-  } catch {}
+function handleLogout() {
   localStorage.removeItem('qa_access_token');
   currentAppMode = APP_MODE.DRIVE;
   lastDriveError = null;
@@ -680,54 +491,25 @@ async function handleLogout() {
 
 async function retryDriveConnect() {
   document.getElementById('drive-expired-banner').style.display = 'none';
-  await connectDriveWithServiceAccount({ reason: 'retry' });
+  await connectDriveWithServiceAccount();
 }
 
-async function connectDriveWithServiceAccount({ reason = 'manual', silent = false } = {}) {
-  if (APP_RUNTIME.resetting) return false;
-  if (APP_RUNTIME.connecting) return false;
-
-  const requestId = beginAsyncFlow('connecting');
-  if (!silent) showLoadingOverlay('กำลังโหลดข้อมูล');
-
+async function connectDriveWithServiceAccount() {
+  showLoadingOverlay('กำลังโหลดข้อมูล');
   try {
-    await loadAllData({ reason });
-    return true;
+    await loadAllData();
   } catch (err) {
     await useBundledFallback(err);
-    return false;
-  } finally {
-    if (!silent) hideLoadingOverlay();
-    endAsyncFlow('connecting', requestId);
   }
 }
 
-async function bootstrapApp() {
-  if (APP_RUNTIME.bootstrapping) return;
-  const requestId = beginAsyncFlow('bootstrapping');
-  try {
-    const token = await getValidAccessToken();
-    if (!token) return;
+(async () => {
+  const supToken = getAccessToken();
+  if (supToken) {
     document.getElementById('login-overlay').style.display = 'flex';
-    await connectDriveWithServiceAccount({ reason: 'bootstrap' });
-  } catch (err) {
-    console.warn('Unable to restore session', err);
-    localStorage.removeItem('qa_access_token');
-    document.getElementById('login-overlay').style.display = 'flex';
-  } finally {
-    endAsyncFlow('bootstrapping', requestId);
+    await connectDriveWithServiceAccount();
   }
-}
-
-bootstrapApp();
-
-supabaseClient.auth.onAuthStateChange((_event, session) => {
-  if (session?.access_token) {
-    localStorage.setItem('qa_access_token', session.access_token);
-  } else {
-    localStorage.removeItem('qa_access_token');
-  }
-});
+})();
 
 async function persistFeatureFile(featureId) {
   const f = DB.features[featureId];
@@ -738,6 +520,8 @@ async function persistFeatureFile(featureId) {
       featureId,
       meta: f.meta,
       cases: f.cases,
+      devCases: f.devCases || [],
+      defects: f.defects || [],
       fileId: f.fileId || '',
     },
   });
@@ -785,16 +569,44 @@ async function seedBundledFeaturesIfNeeded() {
   }
 }
 
-async function loadAllData({ reason = 'manual' } = {}) {
+async function loadAllData() {
+  showLoadingOverlay('กำลังโหลดข้อมูล');
   const payload = await driveProxyRequest('bootstrap');
-  applyDrivePayload(payload);
+  DRIVE_STATE = {
+    rootFolderId: payload.rootFolderId || null,
+    rootFolderName: payload.rootFolderName || '',
+    featuresFolderId: payload.featuresFolderId || null,
+    imagesFolderId: payload.imagesFolderId || null,
+    statusFileId: payload.statusFileId || null,
+  };
+
+  DB = {
+    features: {},
+    status: payload.status || {},
+    deletedCases: payload.deletedCases || [],
+    executions: payload.executions || {},
+  };
+  (payload.features || []).forEach(feature => {
+    const featureId = feature.featureId || feature.meta?.id;
+    if (!featureId) return;
+    DB.features[featureId] = {
+      meta: feature.meta,
+      cases: feature.cases || [],
+      devCases: feature.devCases || [],
+      defects: feature.defects || [],
+      fileId: feature.fileId || null,
+    };
+  });
+
   currentAppMode = APP_MODE.DRIVE;
   DB_READY = true;
   await seedBundledFeaturesIfNeeded();
-  resetUiState({ keepDiagnostic: true });
-  if (reason !== 'reset') {
-    syncAppView();
-  }
+  hideLoadingOverlay();
+  hideFallbackBanner();
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  document.getElementById('drive-status-badge').style.display = 'inline-flex';
+  init();
 }
 
 function scheduleFeatureWrite(featureId) {
@@ -823,7 +635,7 @@ async function setStatus(id, st, executionMeta = null) {
 }
 
 async function saveNewFeature(meta) {
-  DB.features[meta.id] = { meta, cases: [], fileId: null };
+  DB.features[meta.id] = { meta, cases: [], devCases: [], defects: [], fileId: null };
   await writeFeatureFile(meta.id);
 }
 
@@ -852,6 +664,76 @@ async function deleteCaseData(featureId, caseId) {
   if (DB.executions?.[caseId]) delete DB.executions[caseId];
   scheduleFeatureWrite(featureId);
   scheduleStatusWrite();
+}
+
+function ensureFeatureCollections(featureId) {
+  const feature = DB.features[featureId];
+  if (!feature) return null;
+  if (!Array.isArray(feature.devCases)) feature.devCases = [];
+  if (!Array.isArray(feature.defects)) feature.defects = [];
+  return feature;
+}
+
+function getFeatureWorkspaceData(featureId) {
+  const feature = ensureFeatureCollections(featureId);
+  if (!feature) return { devCases: [], defects: [] };
+  return { devCases: feature.devCases, defects: feature.defects };
+}
+
+function addFeatureWorkspaceItem(featureId, type) {
+  const feature = ensureFeatureCollections(featureId);
+  if (!feature) return;
+  const now = new Date().toISOString();
+  if (type === 'dev') {
+    feature.devCases.unshift({
+      id: `DEV-${Date.now()}`,
+      title: '',
+      scenario: '',
+      testType: 'integration',
+      status: 'draft',
+      owner: '',
+      note: '',
+      updatedAt: now,
+    });
+  } else if (type === 'defect') {
+    feature.defects.unshift({
+      id: `BUG-${Date.now()}`,
+      title: '',
+      description: '',
+      severity: 'medium',
+      status: 'open',
+      owner: '',
+      fixSummary: '',
+      updatedAt: now,
+    });
+  }
+  scheduleFeatureWrite(featureId);
+  const feat = FEATURES.find(item => item.meta.id === featureId);
+  if (feat) renderFeature(feat);
+}
+
+function updateFeatureWorkspaceItem(featureId, type, itemId, key, value) {
+  const feature = ensureFeatureCollections(featureId);
+  if (!feature) return;
+  const target = type === 'dev' ? feature.devCases : feature.defects;
+  const item = target.find(entry => entry.id === itemId);
+  if (!item) return;
+  item[key] = value;
+  item.updatedAt = new Date().toISOString();
+  scheduleFeatureWrite(featureId);
+}
+
+function deleteFeatureWorkspaceItem(featureId, type, itemId) {
+  const feature = ensureFeatureCollections(featureId);
+  if (!feature) return;
+  if (type === 'dev') {
+    feature.devCases = feature.devCases.filter(item => item.id !== itemId);
+  } else if (type === 'defect') {
+    feature.defects = feature.defects.filter(item => item.id !== itemId);
+  }
+  scheduleFeatureWrite(featureId);
+  const feat = FEATURES.find(item => item.meta.id === featureId);
+  if (feat) renderFeature(feat);
 }
 
 async function resetAllStatusDB() {
@@ -948,13 +830,15 @@ const SCREEN_PALETTE=[
 ];
 function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
 
-let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all', expandedCaseId=null;
+let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all', activeFeatureWorkspace='qa';
 
 function buildFeatures() {
   const deleted = getDeletedSet();
   return Object.values(DB.features).map(f => ({
     meta: f.meta,
     cases: f.cases.filter(c => !deleted.has(c.id)),
+    devCases: (f.devCases || []).map(item => ({ ...item })),
+    defects: (f.defects || []).map(item => ({ ...item })),
     custom: true,
   }));
 }
@@ -1116,7 +1000,6 @@ async function onStatusChange(caseId,featureId,sel){
     return;
   }
 
-  expandedCaseId = caseId;
   const saved = await openExecutionNoteModal(featureId, caseId, nextStatus, { reRender: false });
   if (!saved) {
     sel.value = prevStatus;
@@ -1125,26 +1008,14 @@ async function onStatusChange(caseId,featureId,sel){
   }
 
   applyStatusSelectClass(sel, nextStatus);
-  FEATURES = buildFeatures();
   updateHeaderStrip();
-  if(currentFeatureId==='overview'){
-    refreshFeatureRowStats(featureId);
-  }else{
-    const feat = FEATURES.find(f=>f.meta.id===featureId);
-    if (feat) {
-      renderFeature(feat);
-      requestAnimationFrame(() => {
-        if (expandedCaseId) toggleDetail(expandedCaseId, true);
-      });
-    } else {
-      refreshStatusStatsBar(featureId);
-    }
-  }
+  if(currentFeatureId==='overview')refreshFeatureRowStats(featureId);
+  else refreshStatusStatsBar(featureId);
 }
 
 function init(){
   initTheme();
-  activeSortMode = '';
+  activeSortMode = getInitialSortMode();
   FEATURES=buildFeatures();
   injectScreenStyles();buildNavTabs();renderOverview();updateHeaderStrip();
 }
@@ -1189,6 +1060,7 @@ function rebuildNav(){
 }
 function switchTab(id){
   currentFeatureId=id;activeType=activeScreen=activeStatusFilt='all';
+  activeFeatureWorkspace = 'qa';
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   document.getElementById(`tab-${id}`)?.classList.add('active');
   if(id==='overview')renderOverview();
@@ -1256,25 +1128,39 @@ function refreshFeatureRowStats(fid){
 }
 
 // ── FEATURE VIEW ───────────────────────────
-function renderFeature(feature){
-  const{meta,cases}=feature;
-  const tags=(meta.tags||[]).map(renderFeatureTag).join('');
-  const screenOptionHtml = [`<option value="all">All screens</option>`]
-    .concat(Object.entries(meta.screens).map(([k,sc])=>`<option value="${k}"${activeScreen===k?' selected':''}>${escapeHtml(sc.label)} – ${escapeHtml(sc.name)}</option>`))
-    .join('');
-  document.getElementById('main-content').innerHTML=`
-    <div class="feature-header">
-      <div style="font-size:24px;">${meta.emoji}</div>
-      <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
-        <div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
-      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
-        <button class="icon-btn icon-btn-neutral" onclick="openEditFeatureModal('${meta.id}')">✏️ แก้ไข Feature</button>
-        <button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>
-        <button class="btn-import-csv" onclick="openImportCsvModal('${meta.id}')">📥 Import CSV</button>
-        <button class="btn-export-csv" onclick="exportCsv('${meta.id}')">📤 Export CSV</button>
-        <button class="btn-add-case" onclick="openAddCaseModal('${meta.id}')">＋ Add case</button>
-      </div>
-    </div>
+function switchFeatureWorkspace(workspace) {
+  activeFeatureWorkspace = ['qa','dev','defect'].includes(workspace) ? workspace : 'qa';
+  const feature = FEATURES.find(item => item.meta.id === currentFeatureId);
+  if (feature) renderFeature(feature);
+}
+
+function getWorkspaceTabClass(workspace) {
+  return workspace === activeFeatureWorkspace ? 'workspace-tab active' : 'workspace-tab';
+}
+
+function renderFeatureWorkspaceTabs() {
+  return `
+    <div class="feature-workspace-tabs">
+      <button class="${getWorkspaceTabClass('qa')}" onclick="switchFeatureWorkspace('qa')">QA Cases</button>
+      <button class="${getWorkspaceTabClass('dev')}" onclick="switchFeatureWorkspace('dev')">Dev Cases</button>
+      <button class="${getWorkspaceTabClass('defect')}" onclick="switchFeatureWorkspace('defect')">Defects</button>
+    </div>`;
+}
+
+function renderWorkspacePanel(feature) {
+  if (activeFeatureWorkspace === 'dev') return renderDevCasesPanel(feature);
+  if (activeFeatureWorkspace === 'defect') return renderDefectsPanel(feature);
+  return renderQaPanel(feature);
+}
+
+function renderQaPanel(feature) {
+  const { meta, cases } = feature;
+  const screenBtns = Object.entries(meta.screens).map(([k, sc], i) => {
+    const cls=['active-purple','active-blue','active-orange','active-green','active-amber','active-teal'][i%6];
+    return `<button class="filter-btn" onclick="setScreenFilter('${k}',this,'${cls}')">${sc.label} – ${sc.name}</button>`;
+  }).join('');
+
+  return `
     <div class="stats-grid">
       <div class="stat-card"><div class="num num-blue" id="s-total">—</div><div class="lbl">Total</div></div>
       <div class="stat-card"><div class="num num-green" id="s-pos">—</div><div class="lbl">Positive</div></div>
@@ -1286,41 +1172,31 @@ function renderFeature(feature){
       <svg class="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M10 10l3 3"/></svg>
       <input type="text" id="search-input" placeholder="ค้นหา test case..." oninput="applyFilters()" />
     </div>
-    <div class="list-toolbar list-toolbar-single">
-      <div class="list-toolbar-item list-toolbar-actions">
-        <button class="icon-btn icon-btn-neutral" onclick="toggleFilterPanel()">⚙️ Filter</button>
+    <div class="list-toolbar">
+      <div class="list-toolbar-item">
+        <span class="filter-label" style="margin:0;">Sort</span>
+        <select id="sort-select" class="form-select sort-select" onchange="setSortMode(this.value)">
+          <option value="id-asc"${activeSortMode==='id-asc'?' selected':''}>ID A-Z</option>
+          <option value="id-desc"${activeSortMode==='id-desc'?' selected':''}>ID Z-A</option>
+          <option value="title-asc"${activeSortMode==='title-asc'?' selected':''}>Test Case A-Z</option>
+          <option value="title-desc"${activeSortMode==='title-desc'?' selected':''}>Test Case Z-A</option>
+        </select>
       </div>
     </div>
-    <div class="filter-panel" id="filter-panel" hidden>
-      <div class="filter-panel-grid">
-        <div class="form-group">
-          <label>Type</label>
-          <select id="filter-type-select" class="form-select">
-            <option value="all"${activeType==='all'?' selected':''}>All types</option>
-            <option value="positive"${activeType==='positive'?' selected':''}>Positive</option>
-            <option value="edge"${activeType==='edge'?' selected':''}>Edge case</option>
-            <option value="negative"${activeType==='negative'?' selected':''}>Negative</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Screen</label>
-          <select id="filter-screen-select" class="form-select">${screenOptionHtml}</select>
-        </div>
-        <div class="form-group">
-          <label>Status</label>
-          <select id="filter-status-select" class="form-select">
-            <option value="all"${activeStatusFilt==='all'?' selected':''}>All status</option>
-            ${STATUSES.map(s=>`<option value="${s.key}"${activeStatusFilt===s.key?' selected':''}>${s.label}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <div class="filter-panel-actions">
-        <button class="btn-modal-cancel" onclick="clearFilterPanel()">Clear</button>
-        <button class="btn-modal-ok" onclick="applyFilterPanel()">Apply</button>
-      </div>
-      <div class="filter-summary" id="filter-summary"></div>
-    </div>
-    <div class="section-sep"><span>Test cases — ${meta.name}</span><span class="count-pill" id="showing-count">— / ${cases.length}</span></div>
+    <div class="filter-section"><div class="filter-label">Type</div><div class="filter-group" id="type-filters">
+      <button class="filter-btn active" onclick="setTypeFilter('all',this,'active')">All types</button>
+      <button class="filter-btn" onclick="setTypeFilter('positive',this,'active-green')">✓ Positive</button>
+      <button class="filter-btn" onclick="setTypeFilter('edge',this,'active-amber')">~ Edge case</button>
+      <button class="filter-btn" onclick="setTypeFilter('negative',this,'active-red')">✗ Negative</button>
+    </div></div>
+    <div class="filter-section"><div class="filter-label">Screen</div><div class="filter-group" id="screen-filters">
+      <button class="filter-btn active" onclick="setScreenFilter('all',this,'active')">All screens</button>${screenBtns}
+    </div></div>
+    <div class="filter-section"><div class="filter-label">Status</div><div class="filter-group" id="status-filters">
+      <button class="filter-btn active" onclick="setStatusFilter('all',this,'active')">All status</button>
+      ${STATUSES.map(s=>`<button class=\"filter-btn\" onclick=\"setStatusFilter('${s.key}',this,'${s.filterClass}')\">${s.icon} ${s.label}</button>`).join('')}
+    </div></div>
+    <div class="section-sep"><span>QA cases — ${meta.name}</span><span class="count-pill" id="showing-count">— / ${cases.length}</span></div>
     <table class="tc-table">
       <thead><tr>
         <th class="col-id">ID</th><th class="col-screen hide-sm">Screen</th>
@@ -1330,35 +1206,102 @@ function renderFeature(feature){
       <tbody id="tc-tbody"></tbody>
     </table>
     <div class="empty-state" id="empty-state" style="display:none;"><div class="emoji">🔍</div><p>ไม่พบ test case</p></div>`;
-  updateTypeStats(cases);refreshStatusStatsBar(meta.id);applyFilters();
 }
 
-function toggleFilterPanel(forceOpen = null){
-  const panel = document.getElementById('filter-panel');
-  if(!panel) return;
-  const shouldOpen = forceOpen === null ? panel.hidden : !!forceOpen;
-  panel.hidden = !shouldOpen;
+function renderDevCasesPanel(feature) {
+  const items = feature.devCases || [];
+  return `
+    <div class="workspace-panel">
+      <div class="workspace-panel-head">
+        <div>
+          <div class="workspace-title">Dev Test Cases</div>
+          <div class="workspace-subtitle">เตรียมพื้นที่ให้ dev เติม test case ใต้ feature นี้ได้เลย</div>
+        </div>
+        <button class="btn-add-case" onclick="addFeatureWorkspaceItem('${feature.meta.id}','dev')">＋ Add Dev Case</button>
+      </div>
+      <div class="workspace-list">
+        ${items.length ? items.map(item => `
+          <div class="workspace-card">
+            <div class="workspace-card-head">
+              <span class="workspace-card-id">${escapeHtml(item.id || '')}</span>
+              <button class="icon-btn icon-btn-danger" onclick="deleteFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}')" title="ลบ dev case">🗑</button>
+            </div>
+            <div class="workspace-grid">
+              <div class="form-group"><label>Title</label><input class="form-input" value="${escapeHtml(item.title || '')}" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}','title',this.value)" placeholder="ชื่อ test case ของ dev" /></div>
+              <div class="form-group"><label>Test type</label><select class="form-select" onchange="updateFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}','testType',this.value)">
+                ${['unit','integration','api','ui'].map(opt => `<option value=\"${opt}\"${(item.testType||'integration')===opt?' selected':''}>${opt}</option>`).join('')}
+              </select></div>
+              <div class="form-group"><label>Status</label><select class="form-select" onchange="updateFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}','status',this.value)">
+                ${['draft','ready','tested'].map(opt => `<option value=\"${opt}\"${(item.status||'draft')===opt?' selected':''}>${opt}</option>`).join('')}
+              </select></div>
+              <div class="form-group"><label>Owner</label><input class="form-input" value="${escapeHtml(item.owner || '')}" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}','owner',this.value)" placeholder="ชื่อ dev" /></div>
+            </div>
+            <div class="form-group"><label>Scenario</label><textarea class="form-textarea" rows="4" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}','scenario',this.value)" placeholder="scenario / coverage / สิ่งที่ dev จะเทส">${escapeHtml(item.scenario || '')}</textarea></div>
+            <div class="form-group"><label>Note</label><textarea class="form-textarea" rows="3" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','dev','${item.id}','note',this.value)" placeholder="ผลที่ dev ฝากกลับมา / test data / caveat">${escapeHtml(item.note || '')}</textarea></div>
+            <div class="workspace-meta">อัปเดตล่าสุด ${escapeHtml(formatExecTimestamp(item.updatedAt))}</div>
+          </div>`).join('') : `<div class="workspace-empty">ยังไม่มี Dev Test Case สำหรับ feature นี้</div>`}
+      </div>
+    </div>`;
 }
 
-function applyFilterPanel(){
-  activeType = document.getElementById('filter-type-select')?.value || 'all';
-  activeScreen = document.getElementById('filter-screen-select')?.value || 'all';
-  activeStatusFilt = document.getElementById('filter-status-select')?.value || 'all';
-  toggleFilterPanel(false);
-  applyFilters();
+function renderDefectsPanel(feature) {
+  const items = feature.defects || [];
+  return `
+    <div class="workspace-panel">
+      <div class="workspace-panel-head">
+        <div>
+          <div class="workspace-title">Defect Log</div>
+          <div class="workspace-subtitle">ใช้รวบ defect ที่ dev หรือ QA ต้องส่งกลับมาคุยต่อใน feature นี้</div>
+        </div>
+        <button class="btn-add-case" onclick="addFeatureWorkspaceItem('${feature.meta.id}','defect')">＋ Log Defect</button>
+      </div>
+      <div class="workspace-list">
+        ${items.length ? items.map(item => `
+          <div class="workspace-card">
+            <div class="workspace-card-head">
+              <span class="workspace-card-id">${escapeHtml(item.id || '')}</span>
+              <button class="icon-btn icon-btn-danger" onclick="deleteFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}')" title="ลบ defect">🗑</button>
+            </div>
+            <div class="workspace-grid">
+              <div class="form-group"><label>Title</label><input class="form-input" value="${escapeHtml(item.title || '')}" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}','title',this.value)" placeholder="ชื่อ defect" /></div>
+              <div class="form-group"><label>Severity</label><select class="form-select" onchange="updateFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}','severity',this.value)">
+                ${['low','medium','high','critical'].map(opt => `<option value=\"${opt}\"${(item.severity||'medium')===opt?' selected':''}>${opt}</option>`).join('')}
+              </select></div>
+              <div class="form-group"><label>Status</label><select class="form-select" onchange="updateFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}','status',this.value)">
+                ${['open','in-progress','fixed','retest','closed'].map(opt => `<option value=\"${opt}\"${(item.status||'open')===opt?' selected':''}>${opt}</option>`).join('')}
+              </select></div>
+              <div class="form-group"><label>Owner</label><input class="form-input" value="${escapeHtml(item.owner || '')}" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}','owner',this.value)" placeholder="คนรับผิดชอบ" /></div>
+            </div>
+            <div class="form-group"><label>Description</label><textarea class="form-textarea" rows="4" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}','description',this.value)" placeholder="รายละเอียด defect / วิธีเจอ / impact">${escapeHtml(item.description || '')}</textarea></div>
+            <div class="form-group"><label>Fix summary</label><textarea class="form-textarea" rows="3" oninput="updateFeatureWorkspaceItem('${feature.meta.id}','defect','${item.id}','fixSummary',this.value)" placeholder="สิ่งที่ dev ส่งกลับมา เช่น root cause / fix / build">${escapeHtml(item.fixSummary || '')}</textarea></div>
+            <div class="workspace-meta">อัปเดตล่าสุด ${escapeHtml(formatExecTimestamp(item.updatedAt))}</div>
+          </div>`).join('') : `<div class="workspace-empty">ยังไม่มี Defect สำหรับ feature นี้</div>`}
+      </div>
+    </div>`;
 }
 
-function clearFilterPanel(){
-  activeType='all';
-  activeScreen='all';
-  activeStatusFilt='all';
-  const typeEl=document.getElementById('filter-type-select');
-  const screenEl=document.getElementById('filter-screen-select');
-  const statusEl=document.getElementById('filter-status-select');
-  if(typeEl) typeEl.value='all';
-  if(screenEl) screenEl.value='all';
-  if(statusEl) statusEl.value='all';
-  applyFilters();
+function renderFeature(feature){
+  const{meta,cases}=feature;
+  const tags=(meta.tags||[]).map(renderFeatureTag).join('');
+  document.getElementById('main-content').innerHTML=`
+    <div class="feature-header">
+      <div style="font-size:24px;">${meta.emoji}</div>
+      <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
+        <div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
+      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+        <button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>
+        <button class="btn-import-csv" onclick="openImportCsvModal('${meta.id}')">📥 Import CSV</button>
+        <button class="btn-export-csv" onclick="exportCsv('${meta.id}')">📤 Export CSV</button>
+        <button class="btn-add-case" onclick="openAddCaseModal('${meta.id}')">＋ Add case</button>
+      </div>
+    </div>
+    ${renderFeatureWorkspaceTabs()}
+    <div id="feature-workspace-root">${renderWorkspacePanel(feature)}</div>`;
+  if (activeFeatureWorkspace === 'qa') {
+    updateTypeStats(cases);
+    refreshStatusStatsBar(meta.id);
+    applyFilters();
+  }
 }
 
 function refreshStatusStatsBar(fid){
@@ -1370,36 +1313,48 @@ function refreshStatusStatsBar(fid){
     <div class="ssg-progress">${buildProgressBar(counts,total,'ssg-pt-seg')}</div>`;
 }
 
-function updateFilterSummary(filteredCount,totalCount){
-  const summary=document.getElementById('filter-summary');
-  if(!summary) return;
-  const chips=[];
-  if(activeType!=='all') chips.push(`Type: ${activeType}`);
-  if(activeScreen!=='all') {
-    const feature = FEATURES.find(item=>item.meta.id===currentFeatureId);
-    const screenLabel = feature?.meta?.screens?.[activeScreen]?.name || activeScreen;
-    chips.push(`Screen: ${screenLabel}`);
-  }
-  if(activeStatusFilt!=='all') chips.push(`Status: ${getStatusLabel(activeStatusFilt)}`);
-  const searchValue=(document.getElementById('search-input')?.value||'').trim();
-  if(searchValue) chips.push(`Search: ${searchValue}`);
-  const detail = chips.length ? chips.join(' · ') : 'All test cases';
-  summary.textContent = `${filteredCount} / ${totalCount} · ${detail}`;
+function clearGroup(id){document.querySelectorAll(`#${id} .filter-btn`).forEach(b=>b.className=b.className.replace(/\bactive[\w-]*/g,'').trim());}
+function setTypeFilter(v,b,c){clearGroup('type-filters');b.classList.add(c);activeType=v;applyFilters();}
+function setScreenFilter(v,b,c){clearGroup('screen-filters');b.classList.add(c);activeScreen=v;applyFilters();}
+function setStatusFilter(v,b,c){clearGroup('status-filters');b.classList.add(c);activeStatusFilt=v;applyFilters();}
+
+function setSortMode(mode) {
+  if (!SORT_MODES.includes(mode)) return;
+  activeSortMode = mode;
+  localStorage.setItem('qa_sort_mode', mode);
+  applyFilters();
 }
 
+function normalizeCompareText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sortCasesForView(cases) {
+  const sorted = [...cases];
+  if (activeSortMode === 'id-asc') {
+    sorted.sort((a, b) => String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  } else if (activeSortMode === 'id-desc') {
+    sorted.sort((a, b) => String(b.id || '').localeCompare(String(a.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  } else if (activeSortMode === 'title-asc') {
+    sorted.sort((a, b) => normalizeCompareText(a.title).localeCompare(normalizeCompareText(b.title), undefined, { numeric: true, sensitivity: 'base' }));
+  } else if (activeSortMode === 'title-desc') {
+    sorted.sort((a, b) => normalizeCompareText(b.title).localeCompare(normalizeCompareText(a.title), undefined, { numeric: true, sensitivity: 'base' }));
+  }
+  return sorted;
+}
 
 function applyFilters(){
+  if (activeFeatureWorkspace !== 'qa') return;
   const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(!f)return;
   const q=(document.getElementById('search-input')?.value||'').toLowerCase();
   const filtered=f.cases.filter(c=>{
     const typeOk=activeType==='all'||c.type===activeType;
     const screenOk=activeScreen==='all'||c.screen===activeScreen;
     const stOk=activeStatusFilt==='all'||getStatus(c.id)===activeStatusFilt;
-    const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&String(s).toLowerCase().includes(q));
+    const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&s.toLowerCase().includes(q));
     return typeOk&&screenOk&&stOk&&srchOk;
   });
-  updateFilterSummary(filtered.length, f.cases.length);
-  renderTable(filtered,f);
+  renderTable(sortCasesForView(filtered),f);
 }
 
 function renderTable(list,feature){
@@ -1474,24 +1429,13 @@ function renderTable(list,feature){
       </td>
     </tr>`;
   }).join('');
-  if (expandedCaseId) {
-    const detailRow = document.getElementById(`detail-${expandedCaseId}`);
-    const mainRow = document.getElementById(`row-${expandedCaseId}`);
-    if (detailRow && mainRow) {
-      detailRow.classList.add('open');
-      mainRow.classList.add('expanded');
-    }
-  }
 }
 
-function toggleDetail(id, forceOpen=false){
-  const dr=document.getElementById(`detail-${id}`),mr=document.getElementById(`row-${id}`);
-  if(!dr||!mr) return;
-  const open=dr.classList.contains('open');
+function toggleDetail(id){
+  const dr=document.getElementById(`detail-${id}`),mr=document.getElementById(`row-${id}`),open=dr.classList.contains('open');
   document.querySelectorAll('.detail-row.open').forEach(r=>r.classList.remove('open'));
   document.querySelectorAll('.tc-row.expanded').forEach(r=>r.classList.remove('expanded'));
-  if(forceOpen || !open){dr.classList.add('open');mr.classList.add('expanded');expandedCaseId=id;dr.scrollIntoView({behavior:'smooth',block:'nearest'});}
-  else { expandedCaseId=null; }
+  if(!open){dr.classList.add('open');mr.classList.add('expanded');dr.scrollIntoView({behavior:'smooth',block:'nearest'});}
 }
 function updateTypeStats(cases){
   document.getElementById('s-total').textContent=cases.length;
@@ -2137,110 +2081,6 @@ async function submitEditCase(featureId, caseId){
   }
 }
 
-
-function openEditFeatureModal(featureId){
-  if (!ensureWritable()) return;
-  const feature = DB.features[featureId];
-  if (!feature?.meta) return;
-  const meta = feature.meta;
-  const themeKey = Object.entries(THEME_COLORS).find(([, value]) => value.color === meta.color)?.[0] || 'orange';
-  const screenText = Object.values(meta.screens || {})
-    .map(sc => {
-      const colorToken = sc.tone || sc.color || '';
-      return `${sc.name || ''}${colorToken ? `|${colorToken}` : ''}`;
-    })
-    .join('\n');
-  const tagText = (meta.tags || [])
-    .map(tag => `${tag.label || ''}${tag.style === 'badge-custom' && tag.color ? `|${tag.color}` : ''}`)
-    .join('\n');
-
-  openModal('edit-feature-modal',`
-    <div class="modal-header"><span class="modal-title">✏️ Edit Feature</span><span class="modal-sub">${escapeHtml(featureId)}</span></div>
-    <div class="modal-body">
-      <div class="form-row2">
-        <div class="form-group"><label>Feature ID</label><input class="form-input" id="ef-id" value="${escapeHtml(meta.id)}" readonly /></div>
-        <div class="form-group"><label>Emoji</label><input class="form-input" id="ef-emoji" value="${escapeHtml(meta.emoji || '📋')}" maxlength="2" /></div>
-      </div>
-      <div class="form-group"><label>Feature name</label><input class="form-input" id="ef-name" value="${escapeHtml(meta.name || '')}" /></div>
-      <div class="form-group"><label>Description</label><input class="form-input" id="ef-desc" value="${escapeHtml(meta.description || '')}" /></div>
-      <div class="form-group"><label>Color theme</label><select class="form-select" id="ef-color">
-        <option value="orange"${themeKey==='orange'?' selected':''}>🟠 Orange</option>
-        <option value="blue"${themeKey==='blue'?' selected':''}>🔵 Blue</option>
-        <option value="green"${themeKey==='green'?' selected':''}>🟢 Green</option>
-        <option value="purple"${themeKey==='purple'?' selected':''}>🟣 Purple</option>
-        <option value="teal"${themeKey==='teal'?' selected':''}>🩵 Teal</option>
-        <option value="amber"${themeKey==='amber'?' selected':''}>🟡 Amber</option>
-      </select></div>
-      <div class="form-group"><label>Screens</label>
-        <textarea class="form-textarea" id="ef-screens" rows="5">${escapeHtml(screenText)}</textarea>
-        <div class="form-hint" style="margin-top:4px;">บรรทัดละ 1 ชื่อ · เลือกสีได้ด้วยรูปแบบ ชื่อ|สี</div>
-      </div>
-      <div class="form-group"><label>Tags</label>
-        <textarea class="form-textarea" id="ef-tags" rows="4">${escapeHtml(tagText)}</textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
-      <button class="btn-modal-ok" onclick="submitEditFeature('${featureId}')">บันทึก Feature</button>
-    </div>`);
-}
-
-async function submitEditFeature(featureId){
-  const current = DB.features[featureId];
-  if(!current?.meta){showFormError('ไม่พบ feature ที่ต้องการแก้ไข');return;}
-  const emoji=document.getElementById('ef-emoji').value.trim()||'📋';
-  const name=document.getElementById('ef-name').value.trim();
-  const desc=document.getElementById('ef-desc').value.trim();
-  const theme=document.getElementById('ef-color').value;
-  const screenInputs=document.getElementById('ef-screens').value.split('\n').map(parseScreenLineInput).filter(item=>item.name);
-  const tags=parseFeatureTagsInput(document.getElementById('ef-tags').value, (THEME_COLORS[theme]||THEME_COLORS.orange).badge);
-  if(!name||!screenInputs.length){showFormError('กรุณากรอก Name และ Screens');return;}
-  const th=THEME_COLORS[theme]||THEME_COLORS.orange;
-  const screens={};
-  screenInputs.forEach((input,i)=>{
-    const style = buildScreenStyleFromToken(input.colorToken);
-    screens[`S${i+1}`] = {
-      label:`Screen ${i+1}`,
-      name:input.name,
-      cssClass:`sc-${featureId}-s${i+1}`,
-      tone: (SCREEN_THEME_COLORS[input.colorToken] ? input.colorToken : ''),
-      color: style?.color || '',
-      bg: style?.bg || '',
-      border: style?.border || '',
-    };
-  });
-
-  const nextMeta = {
-    ...current.meta,
-    emoji,
-    name,
-    description: desc || name,
-    color: th.color,
-    colorBg: th.colorBg,
-    colorBorder: th.colorBorder,
-    tags: tags.length ? tags : current.meta.tags,
-    screens,
-  };
-
-  const okBtn=document.querySelector('.btn-modal-ok');
-  if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
-  try{
-    DB.features[featureId].meta = nextMeta;
-    await writeFeatureFile(featureId);
-    FEATURES=buildFeatures();
-    injectScreenStyles();
-    closeModal();
-    rebuildNav();
-    updateHeaderStrip();
-    const feat=FEATURES.find(item=>item.meta.id===featureId);
-    if(feat) renderFeature(feat);
-  }catch(err){
-    showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
-    if(okBtn){okBtn.disabled=false;okBtn.textContent='บันทึก Feature';}
-  }
-}
-
-
 // ══════════════════════════════════════════
 //  ADD FEATURE MODAL
 // ══════════════════════════════════════════
@@ -2340,23 +2180,13 @@ function showFormError(msg){
 // ══════════════════════════════════════════
 //  RESET STATUS
 // ══════════════════════════════════════════
-async function resetAllStatus() {
+async function resetAllStatus(){
   if (!ensureWritable()) return;
-  if (APP_RUNTIME.connecting || APP_RUNTIME.resetting) return;
-  if (!confirm('Reset ทุก status กลับเป็น No Run?')) return;
-
-  const requestId = beginAsyncFlow('resetting');
+  if(!confirm('Reset ทุก status กลับเป็น No Run?'))return;
   showLoadingOverlay('กำลัง reset...');
-
-  try {
-    clearPendingWrites();
-    await resetAllStatusDB();
-    DB.status = {};
-    DB.deletedCases = [];
-    DB.executions = {};
-    syncAppView();
-  } finally {
-    hideLoadingOverlay();
-    endAsyncFlow('resetting', requestId);
-  }
+  await resetAllStatusDB();
+  hideLoadingOverlay();
+  updateHeaderStrip();
+  if(currentFeatureId==='overview')renderOverview();
+  else{const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(f)renderFeature(f);}
 }
