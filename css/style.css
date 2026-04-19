@@ -1031,97 +1031,34 @@ body {
 }
 .btn-export-csv:hover { background:var(--green); color:#fff; }
 
-/* ── FILTER BAR (collapsed panel) ── */
-.filter-bar {
-  position: relative;
-  margin-bottom: 1rem;
-}
-.filter-bar-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 13px; font-weight: 500; font-family: inherit;
-  padding: 7px 14px; border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: var(--surface); color: var(--text2);
-  cursor: pointer; transition: all 0.15s;
-  white-space: nowrap;
-}
-.filter-bar-btn:hover { border-color: var(--border2); color: var(--text); }
-.filter-bar-btn--active {
-  border-color: var(--orange-border);
-  background: var(--orange-bg); color: var(--orange);
-}
-.filter-bar-caret { transition: transform 0.18s; }
-.filter-bar-btn[aria-expanded="true"] .filter-bar-caret { transform: rotate(180deg); }
-.filter-active-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--orange); flex-shrink: 0;
-}
-
 .filter-panel {
-  position: absolute; top: calc(100% + 6px); left: 0;
-  z-index: 200;
-  background: var(--surface);
+  margin: 0 0 1rem;
+  padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
-  min-width: 340px; max-width: 520px;
-  animation: fp-in 0.15s ease;
+  background: var(--surface2);
 }
-@keyframes fp-in {
-  from { opacity:0; transform: translateY(-6px); }
-  to   { opacity:1; transform: translateY(0); }
+.filter-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
-.filter-panel-body {
-  padding: 14px 16px;
-  display: flex; flex-direction: column; gap: 14px;
+.filter-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }
-.filter-panel-footer {
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  display: flex; justify-content: flex-end; gap: 8px;
-}
-
-.fp-group {}
-.fp-label {
-  font-size: 11px; font-weight: 600; color: var(--text3);
-  text-transform: uppercase; letter-spacing: 0.07em;
-  margin-bottom: 6px;
-}
-.fp-options {
-  display: flex; flex-wrap: wrap; gap: 5px;
-}
-.fp-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 12px; font-weight: 500;
-  padding: 4px 12px; border-radius: 20px;
-  border: 1px solid var(--border);
-  background: var(--surface); color: var(--text2);
-  cursor: pointer; transition: all 0.12s;
-  user-select: none;
-}
-.fp-chip input[type="radio"] { display: none; }
-.fp-chip:has(input:checked) {
-  background: var(--orange-bg); color: var(--orange);
-  border-color: var(--orange-border);
-}
-.fp-chip:hover { border-color: var(--border2); color: var(--text); }
-
-.fp-reset-btn {
-  font-size: 12px; font-weight: 500; font-family: inherit;
-  padding: 6px 14px; border-radius: var(--radius);
-  border: 1px solid var(--border); background: var(--surface);
-  color: var(--text2); cursor: pointer; transition: all 0.15s;
-}
-.fp-reset-btn:hover { background: var(--surface2); }
-.fp-apply-btn {
-  font-size: 12px; font-weight: 500; font-family: inherit;
-  padding: 6px 16px; border-radius: var(--radius);
-  border: 1px solid var(--orange); background: var(--orange);
-  color: #fff; cursor: pointer; transition: all 0.15s;
-}
-.fp-apply-btn:hover { background: #B84E00; }
-
-/* ── EDIT FEATURE button style ── */
-.icon-btn:not(.icon-btn-danger):not(.icon-btn-compact) {
+.filter-summary {
+  margin-top: 12px;
+  font-size: 12px;
   color: var(--text2);
+}
+.list-toolbar-actions {
+  justify-content: flex-end;
+}
+@media (max-width: 768px) {
+  .filter-panel-grid {
+    grid-template-columns: 1fr;
+  }
 }

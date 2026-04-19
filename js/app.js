@@ -955,7 +955,7 @@ const SCREEN_PALETTE=[
 ];
 function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
 
-let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all';
+let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all', expandedCaseId=null;
 
 function buildFeatures() {
   const deleted = getDeletedSet();
@@ -1123,6 +1123,7 @@ async function onStatusChange(caseId,featureId,sel){
     return;
   }
 
+  expandedCaseId = caseId;
   const saved = await openExecutionNoteModal(featureId, caseId, nextStatus, { reRender: false });
   if (!saved) {
     sel.value = prevStatus;
@@ -1131,27 +1132,21 @@ async function onStatusChange(caseId,featureId,sel){
   }
 
   applyStatusSelectClass(sel, nextStatus);
-  // Patch execution note in detail row ทันที (ไม่ต้อง re-render ทั้งตาราง)
-  patchExecutionRowInPlace(caseId);
+  FEATURES = buildFeatures();
   updateHeaderStrip();
-  if(currentFeatureId==='overview')refreshFeatureRowStats(featureId);
-  else refreshStatusStatsBar(featureId);
-}
-
-// อัปเดต execution info ใน DOM ของ row นั้นโดยตรง
-function patchExecutionRowInPlace(caseId) {
-  const execMeta = getExecutionMeta(caseId) || {};
-  const execBy   = execMeta.executor || '-';
-  const execRem  = execMeta.remark   || '-';
-  const execTime = formatExecTimestamp(execMeta.updatedAt);
-  const detailRow = document.getElementById('detail-' + caseId);
-  if (!detailRow) return;
-  const execDiv = detailRow.querySelector('.exec-note-live');
-  if (!execDiv) return;
-  execDiv.innerHTML =
-    '<li><strong>Execute by:</strong> ' + escapeHtml(execBy) + '</li>' +
-    '<li><strong>Remark:</strong> ' + escapeHtml(execRem) + '</li>' +
-    '<li><strong>Updated:</strong> ' + escapeHtml(execTime) + '</li>';
+  if(currentFeatureId==='overview'){
+    refreshFeatureRowStats(featureId);
+  }else{
+    const feat = FEATURES.find(f=>f.meta.id===featureId);
+    if (feat) {
+      renderFeature(feat);
+      requestAnimationFrame(() => {
+        if (expandedCaseId) toggleDetail(expandedCaseId, true);
+      });
+    } else {
+      refreshStatusStatsBar(featureId);
+    }
+  }
 }
 
 function init(){
@@ -1244,7 +1239,6 @@ function buildFeatureRow(f){
   return`<div class="ov-feature-row" onclick="switchTab('${f.meta.id}')">
     <div class="ov-feature-icon" style="background:${f.meta.colorBg};border-color:${f.meta.colorBorder};">${f.meta.emoji}</div>
     <div class="ov-feature-info"><div class="ov-feature-name">${f.meta.name}
-      <button class="icon-btn" onclick="event.stopPropagation();openEditFeatureModal('${f.meta.id}')" title="แก้ไข feature">✏️</button>
       <button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteFeature('${f.meta.id}')" title="ลบ feature">🗑</button>
     </div>
       <div class="ov-feature-desc">${f.meta.description}</div><div class="ov-feature-tags">${tags}</div></div>
@@ -1272,17 +1266,16 @@ function refreshFeatureRowStats(fid){
 function renderFeature(feature){
   const{meta,cases}=feature;
   const tags=(meta.tags||[]).map(renderFeatureTag).join('');
-  const screenBtns=Object.entries(meta.screens).map(([k,sc],i)=>{
-    const cls=['active-purple','active-blue','active-orange','active-green','active-amber','active-teal'][i%6];
-    return`<button class="filter-btn" onclick="setScreenFilter('${k}',this,'${cls}')">${sc.label} – ${sc.name}</button>`;
-  }).join('');
+  const screenOptionHtml = [`<option value="all">All screens</option>`]
+    .concat(Object.entries(meta.screens).map(([k,sc])=>`<option value="${k}"${activeScreen===k?' selected':''}>${escapeHtml(sc.label)} – ${escapeHtml(sc.name)}</option>`))
+    .join('');
   document.getElementById('main-content').innerHTML=`
     <div class="feature-header">
       <div style="font-size:24px;">${meta.emoji}</div>
       <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
         <div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
       <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
-        <button class="icon-btn" onclick="openEditFeatureModal('${meta.id}')">✏️ Edit Feature</button>
+        <button class="icon-btn" onclick="openEditFeatureModal('${meta.id}')">✏️ แก้ไข Feature</button>
         <button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>
         <button class="btn-import-csv" onclick="openImportCsvModal('${meta.id}')">📥 Import CSV</button>
         <button class="btn-export-csv" onclick="exportCsv('${meta.id}')">📤 Export CSV</button>
@@ -1310,45 +1303,38 @@ function renderFeature(feature){
           <option value="title-desc"${activeSortMode==='title-desc'?' selected':''}>Test Case Z-A</option>
         </select>
       </div>
+      <div class="list-toolbar-item list-toolbar-actions">
+        <button class="icon-btn" onclick="toggleFilterPanel()">⚙️ Filter</button>
+      </div>
     </div>
-    <div class="filter-bar" id="filter-bar">
-      <button class="filter-bar-btn" id="filter-bar-toggle" onclick="toggleFilterPanel(event)" aria-expanded="false">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="flex-shrink:0;"><path d="M2 4h12M4 8h8M6 12h4"/></svg>
-        <span id="filter-bar-label">Filter</span>
-        <span id="filter-active-dot" class="filter-active-dot" style="display:none;"></span>
-        <svg class="filter-bar-caret" width="10" height="6" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1 1l4 4 4-4"/></svg>
-      </button>
-      <div class="filter-panel" id="filter-panel" hidden>
-        <div class="filter-panel-body">
-          <div class="fp-group">
-            <div class="fp-label">Type</div>
-            <div class="fp-options" id="fp-type">
-              <label class="fp-chip"><input type="radio" name="fp-type" value="all" checked onchange="fpTypeChange(this)" /> All types</label>
-              <label class="fp-chip"><input type="radio" name="fp-type" value="positive" onchange="fpTypeChange(this)" /> ✓ Positive</label>
-              <label class="fp-chip"><input type="radio" name="fp-type" value="edge" onchange="fpTypeChange(this)" /> ~ Edge</label>
-              <label class="fp-chip"><input type="radio" name="fp-type" value="negative" onchange="fpTypeChange(this)" /> ✗ Negative</label>
-            </div>
-          </div>
-          <div class="fp-group">
-            <div class="fp-label">Screen</div>
-            <div class="fp-options" id="fp-screen">
-              <label class="fp-chip"><input type="radio" name="fp-screen" value="all" checked onchange="fpScreenChange(this)" /> All screens</label>
-              ${Object.entries(meta.screens).map(([k,sc])=>`<label class="fp-chip"><input type="radio" name="fp-screen" value="${k}" onchange="fpScreenChange(this)" /> ${sc.label} ${sc.name}</label>`).join('')}
-            </div>
-          </div>
-          <div class="fp-group">
-            <div class="fp-label">Status</div>
-            <div class="fp-options" id="fp-status">
-              <label class="fp-chip"><input type="radio" name="fp-status" value="all" checked onchange="fpStatusChange(this)" /> All status</label>
-              ${STATUSES.map(s=>`<label class="fp-chip"><input type="radio" name="fp-status" value="${s.key}" onchange="fpStatusChange(this)" /> ${s.icon} ${s.label}</label>`).join('')}
-            </div>
-          </div>
+    <div class="filter-panel" id="filter-panel" hidden>
+      <div class="filter-panel-grid">
+        <div class="form-group">
+          <label>Type</label>
+          <select id="filter-type-select" class="form-select">
+            <option value="all"${activeType==='all'?' selected':''}>All types</option>
+            <option value="positive"${activeType==='positive'?' selected':''}>Positive</option>
+            <option value="edge"${activeType==='edge'?' selected':''}>Edge case</option>
+            <option value="negative"${activeType==='negative'?' selected':''}>Negative</option>
+          </select>
         </div>
-        <div class="filter-panel-footer">
-          <button class="fp-reset-btn" onclick="resetFilters()">↺ Reset</button>
-          <button class="fp-apply-btn" onclick="applyFilterPanel()">Apply</button>
+        <div class="form-group">
+          <label>Screen</label>
+          <select id="filter-screen-select" class="form-select">${screenOptionHtml}</select>
+        </div>
+        <div class="form-group">
+          <label>Status</label>
+          <select id="filter-status-select" class="form-select">
+            <option value="all"${activeStatusFilt==='all'?' selected':''}>All status</option>
+            ${STATUSES.map(s=>`<option value="${s.key}"${activeStatusFilt===s.key?' selected':''}>${s.label}</option>`).join('')}
+          </select>
         </div>
       </div>
+      <div class="filter-panel-actions">
+        <button class="btn-modal-cancel" onclick="clearFilterPanel()">Clear</button>
+        <button class="btn-modal-ok" onclick="applyFilterPanel()">Apply</button>
+      </div>
+      <div class="filter-summary" id="filter-summary"></div>
     </div>
     <div class="section-sep"><span>Test cases — ${meta.name}</span><span class="count-pill" id="showing-count">— / ${cases.length}</span></div>
     <table class="tc-table">
@@ -1363,6 +1349,34 @@ function renderFeature(feature){
   updateTypeStats(cases);refreshStatusStatsBar(meta.id);applyFilters();
 }
 
+function toggleFilterPanel(forceOpen = null){
+  const panel = document.getElementById('filter-panel');
+  if(!panel) return;
+  const shouldOpen = forceOpen === null ? panel.hidden : !!forceOpen;
+  panel.hidden = !shouldOpen;
+}
+
+function applyFilterPanel(){
+  activeType = document.getElementById('filter-type-select')?.value || 'all';
+  activeScreen = document.getElementById('filter-screen-select')?.value || 'all';
+  activeStatusFilt = document.getElementById('filter-status-select')?.value || 'all';
+  toggleFilterPanel(false);
+  applyFilters();
+}
+
+function clearFilterPanel(){
+  activeType='all';
+  activeScreen='all';
+  activeStatusFilt='all';
+  const typeEl=document.getElementById('filter-type-select');
+  const screenEl=document.getElementById('filter-screen-select');
+  const statusEl=document.getElementById('filter-status-select');
+  if(typeEl) typeEl.value='all';
+  if(screenEl) screenEl.value='all';
+  if(statusEl) statusEl.value='all';
+  applyFilters();
+}
+
 function refreshStatusStatsBar(fid){
   const el=document.getElementById('status-stats-bar');if(!el)return;
   const f=FEATURES.find(f=>f.meta.id===fid);if(!f)return;
@@ -1372,86 +1386,22 @@ function refreshStatusStatsBar(fid){
     <div class="ssg-progress">${buildProgressBar(counts,total,'ssg-pt-seg')}</div>`;
 }
 
-// ── tmp state ขณะอยู่ใน filter panel (ก่อน Apply) ──
-let _fpType = 'all', _fpScreen = 'all', _fpStatus = 'all';
-
-function fpTypeChange(radio)   { _fpType   = radio.value; }
-function fpScreenChange(radio) { _fpScreen = radio.value; }
-function fpStatusChange(radio) { _fpStatus = radio.value; }
-
-function applyFilterPanel() {
-  activeType        = _fpType;
-  activeScreen      = _fpScreen;
-  activeStatusFilt  = _fpStatus;
-  closeFilterPanel();
-  updateFilterBarLabel();
-  applyFilters();
+function updateFilterSummary(filteredCount,totalCount){
+  const summary=document.getElementById('filter-summary');
+  if(!summary) return;
+  const chips=[];
+  if(activeType!=='all') chips.push(`Type: ${activeType}`);
+  if(activeScreen!=='all') {
+    const feature = FEATURES.find(item=>item.meta.id===currentFeatureId);
+    const screenLabel = feature?.meta?.screens?.[activeScreen]?.name || activeScreen;
+    chips.push(`Screen: ${screenLabel}`);
+  }
+  if(activeStatusFilt!=='all') chips.push(`Status: ${getStatusLabel(activeStatusFilt)}`);
+  const searchValue=(document.getElementById('search-input')?.value||'').trim();
+  if(searchValue) chips.push(`Search: ${searchValue}`);
+  const detail = chips.length ? chips.join(' · ') : 'All test cases';
+  summary.textContent = `${filteredCount} / ${totalCount} · ${detail}`;
 }
-
-function resetFilters() {
-  _fpType = _fpScreen = _fpStatus = 'all';
-  activeType = activeScreen = activeStatusFilt = 'all';
-  // reset radio buttons
-  document.querySelectorAll('#filter-panel input[type=radio]').forEach(r => { r.checked = r.value === 'all'; });
-  updateFilterBarLabel();
-  applyFilters();
-  closeFilterPanel();
-}
-
-function updateFilterBarLabel() {
-  const labelEl = document.getElementById('filter-bar-label');
-  const dotEl   = document.getElementById('filter-active-dot');
-  if (!labelEl) return;
-  const parts = [];
-  if (activeType   !== 'all') parts.push({positive:'Positive',edge:'Edge',negative:'Negative'}[activeType]  || activeType);
-  if (activeScreen !== 'all') parts.push('Screen: ' + activeScreen);
-  if (activeStatusFilt !== 'all') parts.push(STATUSES.find(s=>s.key===activeStatusFilt)?.label || activeStatusFilt);
-  const active = parts.length > 0;
-  labelEl.textContent = active ? parts.join(' · ') : 'Filter';
-  if (dotEl) dotEl.style.display = active ? 'inline-block' : 'none';
-  const btn = document.getElementById('filter-bar-toggle');
-  if (btn) btn.classList.toggle('filter-bar-btn--active', active);
-}
-
-function toggleFilterPanel(event) {
-  if (event) event.stopPropagation();
-  const panel = document.getElementById('filter-panel');
-  if (!panel) return;
-  if (panel.hidden) openFilterPanel(); else closeFilterPanel();
-}
-function openFilterPanel() {
-  const panel  = document.getElementById('filter-panel');
-  const toggle = document.getElementById('filter-bar-toggle');
-  if (!panel) return;
-  // sync radio to current state before opening
-  _fpType = activeType; _fpScreen = activeScreen; _fpStatus = activeStatusFilt;
-  ['fp-type','fp-screen','fp-status'].forEach(groupId => {
-    document.querySelectorAll(`#filter-panel input[name="${groupId.replace('fp-','fp-')}"]`).forEach(r => {
-      if (groupId === 'fp-type')   r.checked = r.value === _fpType;
-      if (groupId === 'fp-screen') r.checked = r.value === _fpScreen;
-      if (groupId === 'fp-status') r.checked = r.value === _fpStatus;
-    });
-  });
-  panel.hidden = false;
-  if (toggle) toggle.setAttribute('aria-expanded', 'true');
-}
-function closeFilterPanel() {
-  const panel  = document.getElementById('filter-panel');
-  const toggle = document.getElementById('filter-bar-toggle');
-  if (panel)  panel.hidden = true;
-  if (toggle) toggle.setAttribute('aria-expanded', 'false');
-}
-// ปิด panel เมื่อคลิกนอก
-document.addEventListener('click', (e) => {
-  const bar = document.getElementById('filter-bar');
-  if (bar && !bar.contains(e.target)) closeFilterPanel();
-});
-
-// ── legacy compat (ยังใช้ได้หากมีที่อื่นเรียก) ──
-function clearGroup(id){ /* no-op */ }
-function setTypeFilter(v)   { _fpType   = v; applyFilterPanel(); }
-function setScreenFilter(v) { _fpScreen = v; applyFilterPanel(); }
-function setStatusFilter(v) { _fpStatus = v; applyFilterPanel(); }
 
 function setSortMode(mode) {
   if (!SORT_MODES.includes(mode)) return;
@@ -1485,9 +1435,10 @@ function applyFilters(){
     const typeOk=activeType==='all'||c.type===activeType;
     const screenOk=activeScreen==='all'||c.screen===activeScreen;
     const stOk=activeStatusFilt==='all'||getStatus(c.id)===activeStatusFilt;
-    const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&s.toLowerCase().includes(q));
+    const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&String(s).toLowerCase().includes(q));
     return typeOk&&screenOk&&stOk&&srchOk;
   });
+  updateFilterSummary(filtered.length, f.cases.length);
   renderTable(sortCasesForView(filtered),f);
 }
 
@@ -1535,7 +1486,7 @@ function renderTable(list,feature){
           </div>
           <div>
             <div class="detail-section-title">Execution Note</div>
-            <ul class="detail-list expect-list exec-note-live">
+            <ul class="detail-list expect-list">
               <li><strong>Execute by:</strong> ${escapeHtml(execBy)}</li>
               <li><strong>Remark:</strong> ${escapeHtml(execRemark)}</li>
               <li><strong>Updated:</strong> ${escapeHtml(execTime)}</li>
@@ -1563,13 +1514,24 @@ function renderTable(list,feature){
       </td>
     </tr>`;
   }).join('');
+  if (expandedCaseId) {
+    const detailRow = document.getElementById(`detail-${expandedCaseId}`);
+    const mainRow = document.getElementById(`row-${expandedCaseId}`);
+    if (detailRow && mainRow) {
+      detailRow.classList.add('open');
+      mainRow.classList.add('expanded');
+    }
+  }
 }
 
-function toggleDetail(id){
-  const dr=document.getElementById(`detail-${id}`),mr=document.getElementById(`row-${id}`),open=dr.classList.contains('open');
+function toggleDetail(id, forceOpen=false){
+  const dr=document.getElementById(`detail-${id}`),mr=document.getElementById(`row-${id}`);
+  if(!dr||!mr) return;
+  const open=dr.classList.contains('open');
   document.querySelectorAll('.detail-row.open').forEach(r=>r.classList.remove('open'));
   document.querySelectorAll('.tc-row.expanded').forEach(r=>r.classList.remove('expanded'));
-  if(!open){dr.classList.add('open');mr.classList.add('expanded');dr.scrollIntoView({behavior:'smooth',block:'nearest'});}
+  if(forceOpen || !open){dr.classList.add('open');mr.classList.add('expanded');expandedCaseId=id;dr.scrollIntoView({behavior:'smooth',block:'nearest'});}
+  else { expandedCaseId=null; }
 }
 function updateTypeStats(cases){
   document.getElementById('s-total').textContent=cases.length;
@@ -2215,108 +2177,113 @@ async function submitEditCase(featureId, caseId){
   }
 }
 
-// ══════════════════════════════════════════
-//  ADD FEATURE MODAL
-// ══════════════════════════════════════════
-function openEditFeatureModal(featureId) {
+
+function openEditFeatureModal(featureId){
   if (!ensureWritable()) return;
-  const f = DB.features[featureId]; if (!f) return;
-  const meta = f.meta;
-  const th = Object.entries(THEME_COLORS).find(([,v]) => v.color === meta.color)?.[0] || 'orange';
-  const screensText = Object.values(meta.screens)
+  const feature = DB.features[featureId];
+  if (!feature?.meta) return;
+  const meta = feature.meta;
+  const themeKey = Object.entries(THEME_COLORS).find(([, value]) => value.color === meta.color)?.[0] || 'orange';
+  const screenText = Object.values(meta.screens || {})
     .map(sc => {
-      const tone = sc.tone || '';
-      const colorSuffix = sc.color ? '|' + (tone || sc.color) : '';
-      return sc.name + colorSuffix;
-    }).join('\n');
-  const tagsText = (meta.tags || [])
-    .map(t => t.color ? t.label + '|' + t.color : t.label)
+      const colorToken = sc.tone || sc.color || '';
+      return `${sc.name || ''}${colorToken ? `|${colorToken}` : ''}`;
+    })
+    .join('\n');
+  const tagText = (meta.tags || [])
+    .map(tag => `${tag.label || ''}${tag.style === 'badge-custom' && tag.color ? `|${tag.color}` : ''}`)
     .join('\n');
 
   openModal('edit-feature-modal',`
-    <div class="modal-header"><span class="modal-title">✏️ Edit Feature</span><span class="modal-sub">${meta.emoji} ${escapeHtml(meta.name)}</span></div>
+    <div class="modal-header"><span class="modal-title">✏️ Edit Feature</span><span class="modal-sub">${escapeHtml(featureId)}</span></div>
     <div class="modal-body">
       <div class="form-row2">
-        <div class="form-group"><label>Feature ID</label><input class="form-input" id="eff-id" value="${escapeHtml(meta.id)}" readonly style="opacity:.6;cursor:not-allowed;" /></div>
-        <div class="form-group"><label>Emoji</label><input class="form-input" id="eff-emoji" value="${escapeHtml(meta.emoji||'📋')}" maxlength="2" /></div>
+        <div class="form-group"><label>Feature ID</label><input class="form-input" id="ef-id" value="${escapeHtml(meta.id)}" readonly /></div>
+        <div class="form-group"><label>Emoji</label><input class="form-input" id="ef-emoji" value="${escapeHtml(meta.emoji || '📋')}" maxlength="2" /></div>
       </div>
-      <div class="form-group"><label>Feature name</label><input class="form-input" id="eff-name" value="${escapeHtml(meta.name||'')}"/></div>
-      <div class="form-group"><label>Description</label><input class="form-input" id="eff-desc" value="${escapeHtml(meta.description||'')}"/></div>
-      <div class="form-group"><label>Color theme</label><select class="form-select" id="eff-color">
-        <option value="orange"${th==='orange'?' selected':''}>🟠 Orange</option>
-        <option value="blue"${th==='blue'?' selected':''}>🔵 Blue</option>
-        <option value="green"${th==='green'?' selected':''}>🟢 Green</option>
-        <option value="purple"${th==='purple'?' selected':''}>🟣 Purple</option>
-        <option value="teal"${th==='teal'?' selected':''}>🩵 Teal</option>
-        <option value="amber"${th==='amber'?' selected':''}>🟡 Amber</option>
+      <div class="form-group"><label>Feature name</label><input class="form-input" id="ef-name" value="${escapeHtml(meta.name || '')}" /></div>
+      <div class="form-group"><label>Description</label><input class="form-input" id="ef-desc" value="${escapeHtml(meta.description || '')}" /></div>
+      <div class="form-group"><label>Color theme</label><select class="form-select" id="ef-color">
+        <option value="orange"${themeKey==='orange'?' selected':''}>🟠 Orange</option>
+        <option value="blue"${themeKey==='blue'?' selected':''}>🔵 Blue</option>
+        <option value="green"${themeKey==='green'?' selected':''}>🟢 Green</option>
+        <option value="purple"${themeKey==='purple'?' selected':''}>🟣 Purple</option>
+        <option value="teal"${themeKey==='teal'?' selected':''}>🩵 Teal</option>
+        <option value="amber"${themeKey==='amber'?' selected':''}>🟡 Amber</option>
       </select></div>
-      <div class="form-group"><label>Screens <span class="form-hint">บรรทัดละ 1 ชื่อ · สีได้ด้วย ชื่อ|สี</span></label>
-        <textarea class="form-textarea" id="eff-screens" rows="5" placeholder="Login form|blue">${escapeHtml(screensText)}</textarea></div>
-      <div class="form-group"><label>Tags <span class="form-hint">บรรทัดละ 1 tag · สีได้ด้วย Tag|#HEX</span></label>
-        <textarea class="form-textarea" id="eff-tags" rows="4" placeholder="Journey">${escapeHtml(tagsText)}</textarea></div>
+      <div class="form-group"><label>Screens</label>
+        <textarea class="form-textarea" id="ef-screens" rows="5">${escapeHtml(screenText)}</textarea>
+        <div class="form-hint" style="margin-top:4px;">บรรทัดละ 1 ชื่อ · เลือกสีได้ด้วยรูปแบบ ชื่อ|สี</div>
+      </div>
+      <div class="form-group"><label>Tags</label>
+        <textarea class="form-textarea" id="ef-tags" rows="4">${escapeHtml(tagText)}</textarea>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
-      <button class="btn-modal-ok" onclick="submitEditFeature('${featureId}')">บันทึก</button>
-    </div>\`);
+      <button class="btn-modal-ok" onclick="submitEditFeature('${featureId}')">บันทึก Feature</button>
+    </div>`);
 }
 
-async function submitEditFeature(featureId) {
-  const f = DB.features[featureId]; if (!f) return;
-  const emoji = document.getElementById('eff-emoji').value.trim() || '📋';
-  const name  = document.getElementById('eff-name').value.trim();
-  const desc  = document.getElementById('eff-desc').value.trim();
-  const theme = document.getElementById('eff-color').value;
-  const screenInputs = document.getElementById('eff-screens').value.split('\n').map(parseScreenLineInput).filter(item => item.name);
-  const tags = parseFeatureTagsInput(document.getElementById('eff-tags').value, (THEME_COLORS[theme]||THEME_COLORS.orange).badge);
-  if (!name || !screenInputs.length) { showFormError('กรุณากรอก Name และ Screens'); return; }
-
-  const th = THEME_COLORS[theme] || THEME_COLORS.orange;
-  // สร้าง screens ใหม่ แต่คง fileId / case data ไว้
-  const oldScreenKeys = Object.keys(f.meta.screens);
-  const screens = {};
-  screenInputs.forEach((input, i) => {
-    const key = 'S' + (i + 1);
+async function submitEditFeature(featureId){
+  const current = DB.features[featureId];
+  if(!current?.meta){showFormError('ไม่พบ feature ที่ต้องการแก้ไข');return;}
+  const emoji=document.getElementById('ef-emoji').value.trim()||'📋';
+  const name=document.getElementById('ef-name').value.trim();
+  const desc=document.getElementById('ef-desc').value.trim();
+  const theme=document.getElementById('ef-color').value;
+  const screenInputs=document.getElementById('ef-screens').value.split('\n').map(parseScreenLineInput).filter(item=>item.name);
+  const tags=parseFeatureTagsInput(document.getElementById('ef-tags').value, (THEME_COLORS[theme]||THEME_COLORS.orange).badge);
+  if(!name||!screenInputs.length){showFormError('กรุณากรอก Name และ Screens');return;}
+  const th=THEME_COLORS[theme]||THEME_COLORS.orange;
+  const screens={};
+  screenInputs.forEach((input,i)=>{
     const style = buildScreenStyleFromToken(input.colorToken);
-    const oldScreenEntry = f.meta.screens[oldScreenKeys[i]];
-    screens[key] = {
-      label: 'Screen ' + (i + 1),
-      name: input.name,
-      cssClass: 'sc-' + featureId + '-s' + (i + 1),
-      tone: SCREEN_THEME_COLORS[input.colorToken] ? input.colorToken : '',
+    screens[`S${i+1}`] = {
+      label:`Screen ${i+1}`,
+      name:input.name,
+      cssClass:`sc-${featureId}-s${i+1}`,
+      tone: (SCREEN_THEME_COLORS[input.colorToken] ? input.colorToken : ''),
       color: style?.color || '',
       bg: style?.bg || '',
       border: style?.border || '',
     };
-    // migrate cases that referenced old screen key
-    if (oldScreenEntry && oldScreenKeys[i] !== key) {
-      f.cases.forEach(c => { if (c.screen === oldScreenKeys[i]) c.screen = key; });
-    }
   });
 
-  f.meta = { ...f.meta, name, emoji, description: desc || name,
-    color: th.color, colorBg: th.colorBg, colorBorder: th.colorBorder,
-    tags: tags.length ? tags : [{ label: 'Journey', style: th.badge }],
-    screens };
+  const nextMeta = {
+    ...current.meta,
+    emoji,
+    name,
+    description: desc || name,
+    color: th.color,
+    colorBg: th.colorBg,
+    colorBorder: th.colorBorder,
+    tags: tags.length ? tags : current.meta.tags,
+    screens,
+  };
 
-  const okBtn = document.querySelector('.btn-modal-ok');
-  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลังบันทึก...'; }
-  try {
+  const okBtn=document.querySelector('.btn-modal-ok');
+  if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
+  try{
+    DB.features[featureId].meta = nextMeta;
     await writeFeatureFile(featureId);
-    FEATURES = buildFeatures();
+    FEATURES=buildFeatures();
     injectScreenStyles();
     closeModal();
     rebuildNav();
     updateHeaderStrip();
-    const feat = FEATURES.find(item => item.meta.id === featureId);
-    if (currentFeatureId === featureId && feat) renderFeature(feat);
-    else if (currentFeatureId === 'overview') renderOverview();
-  } catch (err) {
-    showFormError('บันทึกไม่สำเร็จ: ' + err.message);
-    if (okBtn) { okBtn.disabled = false; okBtn.textContent = 'บันทึก'; }
+    const feat=FEATURES.find(item=>item.meta.id===featureId);
+    if(feat) renderFeature(feat);
+  }catch(err){
+    showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
+    if(okBtn){okBtn.disabled=false;okBtn.textContent='บันทึก Feature';}
   }
 }
 
+
+// ══════════════════════════════════════════
+//  ADD FEATURE MODAL
+// ══════════════════════════════════════════
 function openAddFeatureModal(){
   if (!ensureWritable()) return;
   openModal('add-feature-modal',`
