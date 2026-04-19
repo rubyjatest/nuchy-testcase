@@ -659,6 +659,7 @@ async function handleLogin() {
     const token = data?.session?.access_token || '';
     if (!token) throw new Error('Login failed: session not found');
     localStorage.setItem('qa_access_token', token);
+    localStorage.setItem('qa_user_email', data?.user?.email || email);
     await connectDriveWithServiceAccount();
   } catch (err) {
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
@@ -673,6 +674,7 @@ async function handleLogout() {
     await supabaseClient.auth.signOut();
   } catch {}
   localStorage.removeItem('qa_access_token');
+  localStorage.removeItem('qa_user_email');
   currentAppMode = APP_MODE.DRIVE;
   lastDriveError = null;
   lastDriveDiagnostic = null;
@@ -726,8 +728,10 @@ bootstrapApp();
 supabaseClient.auth.onAuthStateChange((_event, session) => {
   if (session?.access_token) {
     localStorage.setItem('qa_access_token', session.access_token);
+    if (session.user?.email) localStorage.setItem('qa_user_email', session.user.email);
   } else {
     localStorage.removeItem('qa_access_token');
+    localStorage.removeItem('qa_user_email');
   }
 });
 
@@ -960,7 +964,9 @@ function buildFeatures() {
   const deleted = getDeletedSet();
   return Object.values(DB.features).map(f => ({
     meta: f.meta,
-    cases: f.cases.filter(c => !deleted.has(c.id)),
+    cases: (f.cases || []).filter(c => !deleted.has(c.id)),
+    devCases: Array.isArray(f.devCases) ? f.devCases : [],
+    defects: Array.isArray(f.defects) ? f.defects : [],
     custom: true,
   }));
 }
@@ -1396,6 +1402,7 @@ function renderDevCaseCard(featureId, item, idx){
   return `
     <div class="workspace-card">
       <div class="workspace-card-head"><strong>DEV-${idx+1}</strong><button class="icon-btn icon-btn-danger icon-btn-compact" onclick="removeDevCase('${featureId}','${item.id}')">🗑</button></div>
+      ${renderWorkspaceUpdateMeta(item)}
       <div class="workspace-grid workspace-grid-2">
         <div class="form-group"><label>Title</label><input class="form-input" value="${escapeHtml(item.title || '')}" onchange="updateDevCaseField('${featureId}','${item.id}','title',this.value)" /></div>
         <div class="form-group"><label>Owner</label><input class="form-input" value="${escapeHtml(item.owner || '')}" onchange="updateDevCaseField('${featureId}','${item.id}','owner',this.value)" /></div>
@@ -1429,34 +1436,43 @@ function renderDefectsTab(feature){
 }
 
 function renderDefectCard(featureId, item, idx, qaCases){
-  const testcaseOptions = [`<option value="">— ไม่ผูก test case —</option>`].concat(qaCases.map(tc => `<option value="${escapeHtml(tc.id)}"${item.testCaseId===tc.id?' selected':''}>${escapeHtml(tc.id)} — ${escapeHtml(tc.title)}</option>`)).join('');
-  const attachments = item.attachments || [];
-  const comments = item.comments || [];
+  const defect = normalizeDefectRecord(item);
+  const attachments = defect.attachments || [];
+  const comments = defect.comments || [];
+  const history = defect.history || [];
+  const linkedSummary = defect.testCaseIds?.length
+    ? defect.testCaseIds.map(id => `<span class="mini-chip">${escapeHtml(id)}</span>`).join('')
+    : '<span class="workspace-empty-inline">ยังไม่ผูก test case</span>';
   return `
     <div class="workspace-card defect-card">
-      <div class="workspace-card-head"><strong>BUG-${idx+1}</strong><button class="icon-btn icon-btn-danger icon-btn-compact" onclick="removeDefect('${featureId}','${item.id}')">🗑</button></div>
+      <div class="workspace-card-head"><strong>BUG-${idx+1}</strong><button class="icon-btn icon-btn-danger icon-btn-compact" onclick="removeDefect('${featureId}','${defect.id}')">🗑</button></div>
+      ${renderWorkspaceUpdateMeta(defect)}
       <div class="workspace-grid workspace-grid-3">
-        <div class="form-group"><label>Title</label><input class="form-input" value="${escapeHtml(item.title || '')}" onchange="updateDefectField('${featureId}','${item.id}','title',this.value)" /></div>
-        <div class="form-group"><label>Linked Test Case ID</label><select class="form-select" onchange="updateDefectField('${featureId}','${item.id}','testCaseId',this.value)">${testcaseOptions}</select></div>
-        <div class="form-group"><label>Build Version</label><input class="form-input" value="${escapeHtml(item.buildVersion || '')}" onchange="updateDefectField('${featureId}','${item.id}','buildVersion',this.value)" placeholder="เช่น 2.4.1 (145)" /></div>
-        <div class="form-group"><label>Severity</label><select class="form-select" onchange="updateDefectField('${featureId}','${item.id}','severity',this.value)">${['low','medium','high','critical'].map(v => `<option value="${v}"${item.severity===v?' selected':''}>${v}</option>`).join('')}</select></div>
-        <div class="form-group"><label>Status</label><select class="form-select" onchange="updateDefectField('${featureId}','${item.id}','status',this.value)">${['open','in-progress','fixed','retest','closed'].map(v => `<option value="${v}"${item.status===v?' selected':''}>${v}</option>`).join('')}</select></div>
-        <div class="form-group"><label>Owner</label><input class="form-input" value="${escapeHtml(item.owner || '')}" onchange="updateDefectField('${featureId}','${item.id}','owner',this.value)" /></div>
+        <div class="form-group"><label>Title</label><input class="form-input" value="${escapeHtml(defect.title || '')}" onchange="updateDefectField('${featureId}','${defect.id}','title',this.value)" /></div>
+        <div class="form-group"><label>Build Version</label><input class="form-input" value="${escapeHtml(defect.buildVersion || '')}" onchange="updateDefectField('${featureId}','${defect.id}','buildVersion',this.value)" placeholder="เช่น 2.4.1 (145)" /></div>
+        <div class="form-group"><label>Owner</label><input class="form-input" value="${escapeHtml(defect.owner || '')}" onchange="updateDefectField('${featureId}','${defect.id}','owner',this.value)" /></div>
+        <div class="form-group"><label>Severity</label><select class="form-select" onchange="updateDefectField('${featureId}','${defect.id}','severity',this.value)">${['low','medium','high','critical'].map(v => `<option value="${v}"${defect.severity===v?' selected':''}>${v}</option>`).join('')}</select></div>
+        <div class="form-group"><label>Status</label><select class="form-select" onchange="updateDefectField('${featureId}','${defect.id}','status',this.value)">${['open','in-progress','fixed','retest','closed'].map(v => `<option value="${v}"${defect.status===v?' selected':''}>${v}</option>`).join('')}</select></div>
+        <div class="form-group"><label>Linked Test Cases</label>${renderLinkedTestCaseSelector(featureId, defect, qaCases)}</div>
+      </div>
+      <div class="workspace-linked-summary"><span class="workspace-meta-label">Linked Test Case IDs</span><div class="mini-chip-wrap">${linkedSummary}</div></div>
+      <div class="workspace-grid workspace-grid-2">
+        <div class="form-group"><label>Description</label><textarea class="form-textarea" onchange="updateDefectField('${featureId}','${defect.id}','description',this.value)">${escapeHtml(defect.description || '')}</textarea></div>
+        <div class="form-group"><label>Fix Summary</label><textarea class="form-textarea" onchange="updateDefectField('${featureId}','${defect.id}','fixSummary',this.value)">${escapeHtml(defect.fixSummary || '')}</textarea></div>
       </div>
       <div class="workspace-grid workspace-grid-2">
-        <div class="form-group"><label>Description</label><textarea class="form-textarea" onchange="updateDefectField('${featureId}','${item.id}','description',this.value)">${escapeHtml(item.description || '')}</textarea></div>
-        <div class="form-group"><label>Fix Summary</label><textarea class="form-textarea" onchange="updateDefectField('${featureId}','${item.id}','fixSummary',this.value)">${escapeHtml(item.fixSummary || '')}</textarea></div>
+        <div class="form-group"><label>Upload attachment</label><div class="attachment-upload-row"><label class="btn-modal-ok workspace-upload-btn">Upload file<input type="file" multiple style="display:none" onchange="uploadDefectAttachments(event,'${featureId}','${defect.id}')"></label></div></div>
+        <div class="form-group"><label>Add comment</label><div class="comment-entry"><textarea class="form-textarea" id="comment-input-${defect.id}" placeholder="ใส่ comment เพิ่มเติม"></textarea><button class="btn-modal-ok" type="button" onclick="addDefectComment('${featureId}','${defect.id}')">Add comment</button></div></div>
       </div>
-      <div class="workspace-grid workspace-grid-2">
-        <div class="form-group"><label>Attachment links</label><textarea class="form-textarea" placeholder="วางลิงก์ไฟล์ 1 บรรทัดต่อ 1 ลิงก์" onchange="updateDefectAttachmentLinks('${featureId}','${item.id}',this.value)">${escapeHtml((attachments||[]).map(att => att.url || '').join('\n'))}</textarea></div>
-        <div class="form-group"><label>Add comment</label><div class="comment-entry"><textarea class="form-textarea" id="comment-input-${item.id}" placeholder="ใส่ comment เพิ่มเติม"></textarea><button class="btn-modal-ok" type="button" onclick="addDefectComment('${featureId}','${item.id}')">Add comment</button></div></div>
-      </div>
-      <div class="workspace-meta-row">
+      <div class="workspace-meta-row workspace-meta-row-stacked">
         <div class="workspace-meta-block"><span class="workspace-meta-label">Attachments</span>
-          ${attachments.length ? `<ul class="inline-link-list">${attachments.map((att, i) => `<li><a href="${escapeHtml(att.url || '#')}" target="_blank">${escapeHtml(att.name || att.url || `Attachment ${i+1}`)}</a></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี attachment</div>`}
+          ${attachments.length ? `<ul class="inline-link-list">${attachments.map((att, i) => `<li><a href="${escapeHtml(att.viewUrl || att.url || '#')}" target="_blank">${escapeHtml(att.name || `Attachment ${i+1}`)}</a><button class="inline-remove-btn" type="button" onclick="removeDefectAttachment('${featureId}','${defect.id}','${att.id || ''}')">ลบ</button></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี attachment</div>`}
         </div>
-        <div class="workspace-meta-block"><span class="workspace-meta-label">Comments</span>
+        <div class="workspace-meta-block"><span class="workspace-meta-label">Comment History</span>
           ${comments.length ? `<ul class="comment-list">${comments.map(comment => `<li><div class="comment-meta">${escapeHtml(comment.author || '-')} · ${escapeHtml(formatExecTimestamp(comment.createdAt))}</div><div>${escapeHtml(comment.text || '')}</div></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี comment</div>`}
+        </div>
+        <div class="workspace-meta-block"><span class="workspace-meta-label">Activity</span>
+          ${history.length ? `<ul class="comment-list">${history.map(entry => `<li><div class="comment-meta">${escapeHtml(entry.author || '-')} · ${escapeHtml(formatExecTimestamp(entry.createdAt))}</div><div><strong>${escapeHtml(entry.action || '')}</strong>${entry.detail ? ` — ${escapeHtml(entry.detail)}` : ''}</div></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี activity</div>`}
         </div>
       </div>
     </div>`;
@@ -1471,13 +1487,68 @@ function normalizeWorkspaceCollections(featureId){
   if (!store) return null;
   if (!Array.isArray(store.devCases)) store.devCases = [];
   if (!Array.isArray(store.defects)) store.defects = [];
+  store.defects = store.defects.map(entry => normalizeDefectRecord(entry));
   return store;
 }
 
 function getCurrentActor(){
+  const cachedEmail = String(localStorage.getItem('qa_user_email') || '').trim();
+  if (cachedEmail) return cachedEmail;
   const names = getExecutorNameList();
   return names[0] || 'unknown';
 }
+
+function touchWorkspaceRecord(item){
+  if (!item) return;
+  item.updatedAt = new Date().toISOString();
+  item.updatedBy = getCurrentActor();
+}
+
+function normalizeDefectRecord(item){
+  if (!item || typeof item !== 'object') return item;
+  const linked = Array.isArray(item.testCaseIds)
+    ? item.testCaseIds.filter(Boolean)
+    : (item.testCaseId ? [item.testCaseId] : []);
+  item.testCaseIds = linked;
+  if (!Array.isArray(item.attachments)) item.attachments = [];
+  if (!Array.isArray(item.comments)) item.comments = [];
+  if (!Array.isArray(item.history)) item.history = [];
+  return item;
+}
+
+function recordDefectHistory(item, action, detail = ''){
+  if (!item) return;
+  if (!Array.isArray(item.history)) item.history = [];
+  item.history.unshift({
+    id: makeWorkspaceId('HIS'),
+    action,
+    detail,
+    author: getCurrentActor(),
+    createdAt: new Date().toISOString(),
+  });
+  item.history = item.history.slice(0, 50);
+}
+
+function renderLinkedTestCaseSelector(featureId, item, qaCases){
+  const selected = new Set(Array.isArray(item.testCaseIds) ? item.testCaseIds : []);
+  return `
+    <div class="multi-select-list">
+      ${qaCases.length ? qaCases.map(tc => `
+        <label class="multi-select-option">
+          <input type="checkbox" ${selected.has(tc.id) ? 'checked' : ''}
+            onchange="toggleDefectTestCaseLink('${featureId}','${item.id}','${tc.id}', this.checked)">
+          <span><strong>${escapeHtml(tc.id)}</strong> — ${escapeHtml(tc.title)}</span>
+        </label>
+      `).join('') : `<div class="workspace-empty-inline">ยังไม่มี QA case ใน feature นี้</div>`}
+    </div>`;
+}
+
+function renderWorkspaceUpdateMeta(item){
+  const updatedBy = escapeHtml(item?.updatedBy || '-');
+  const updatedAt = escapeHtml(formatExecTimestamp(item?.updatedAt));
+  return `<div class="workspace-update-meta">อัปเดตล่าสุดโดย ${updatedBy} · ${updatedAt}</div>`;
+}
+
 
 function rerenderCurrentFeature(){
   FEATURES = buildFeatures();
@@ -1488,7 +1559,9 @@ function rerenderCurrentFeature(){
 function addDevCase(featureId){
   if (!ensureWritable()) return;
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
-  store.devCases.unshift({ id: makeWorkspaceId('DEV'), title:'', owner:'', testType:'manual', status:'draft', scenario:'', note:'', updatedAt:new Date().toISOString() });
+  const devCase = { id: makeWorkspaceId('DEV'), title:'', owner:'', testType:'manual', status:'draft', scenario:'', note:'' };
+  touchWorkspaceRecord(devCase);
+  store.devCases.unshift(devCase);
   scheduleFeatureWrite(featureId);
   rerenderCurrentFeature();
 }
@@ -1497,7 +1570,7 @@ function updateDevCaseField(featureId, itemId, key, value){
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
   const item = store.devCases.find(entry => entry.id === itemId); if (!item) return;
   item[key] = value;
-  item.updatedAt = new Date().toISOString();
+  touchWorkspaceRecord(item);
   scheduleFeatureWrite(featureId);
 }
 
@@ -1514,7 +1587,23 @@ function removeDevCase(featureId, itemId){
 function addDefect(featureId){
   if (!ensureWritable()) return;
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
-  store.defects.unshift({ id: makeWorkspaceId('BUG'), title:'', testCaseId:'', buildVersion:'', severity:'medium', status:'open', owner:'', description:'', fixSummary:'', attachments:[], comments:[], updatedAt:new Date().toISOString() });
+  const defect = {
+    id: makeWorkspaceId('BUG'),
+    title:'',
+    testCaseIds:[],
+    buildVersion:'',
+    severity:'medium',
+    status:'open',
+    owner:'',
+    description:'',
+    fixSummary:'',
+    attachments:[],
+    comments:[],
+    history:[],
+  };
+  touchWorkspaceRecord(defect);
+  recordDefectHistory(defect, 'created', 'สร้าง defect ใหม่');
+  store.defects.unshift(defect);
   scheduleFeatureWrite(featureId);
   rerenderCurrentFeature();
 }
@@ -1522,18 +1611,72 @@ function addDefect(featureId){
 function updateDefectField(featureId, itemId, key, value){
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
   const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
+  normalizeDefectRecord(item);
   item[key] = value;
-  item.updatedAt = new Date().toISOString();
+  touchWorkspaceRecord(item);
+  recordDefectHistory(item, 'updated', `${key} changed`);
   scheduleFeatureWrite(featureId);
 }
 
-function updateDefectAttachmentLinks(featureId, itemId, rawValue){
+function toggleDefectTestCaseLink(featureId, itemId, testCaseId, checked){
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
   const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
-  item.attachments = String(rawValue || '').split(/\n+/).map(v => v.trim()).filter(Boolean).map(url => ({ name: url.replace(/^https?:\/\//, ''), url }));
-  item.updatedAt = new Date().toISOString();
+  normalizeDefectRecord(item);
+  const selected = new Set(item.testCaseIds || []);
+  if (checked) selected.add(testCaseId); else selected.delete(testCaseId);
+  item.testCaseIds = Array.from(selected);
+  item.testCaseId = item.testCaseIds[0] || '';
+  touchWorkspaceRecord(item);
+  recordDefectHistory(item, checked ? 'linked testcase' : 'unlinked testcase', testCaseId);
   scheduleFeatureWrite(featureId);
   rerenderCurrentFeature();
+}
+
+async function uploadDefectAttachments(event, featureId, itemId){
+  if (!ensureWritable()) {
+    event.target.value = '';
+    return;
+  }
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  showLoadingOverlay(`กำลังอัปโหลด ${files.length} ไฟล์...`);
+  try {
+    const store = normalizeWorkspaceCollections(featureId); if (!store) return;
+    const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
+    normalizeDefectRecord(item);
+    const uploaded = await driveUploadImages(files, itemId);
+    item.attachments.push(...uploaded.map(file => ({
+      id: file.id,
+      name: file.name,
+      url: file.url,
+      viewUrl: file.viewUrl || file.url,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: getCurrentActor(),
+    })));
+    touchWorkspaceRecord(item);
+    recordDefectHistory(item, 'uploaded attachment', `${files.length} file(s)`);
+    scheduleFeatureWrite(featureId);
+    rerenderCurrentFeature();
+  } catch (err) {
+    alert('อัปโหลด attachment ไม่สำเร็จ: ' + buildErrorMessage(err));
+  } finally {
+    hideLoadingOverlay();
+    event.target.value = '';
+  }
+}
+
+function removeDefectAttachment(featureId, itemId, attachmentId){
+  if (!ensureWritable()) return;
+  const store = normalizeWorkspaceCollections(featureId); if (!store) return;
+  const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
+  normalizeDefectRecord(item);
+  const target = item.attachments.find(att => att.id === attachmentId);
+  item.attachments = item.attachments.filter(att => att.id !== attachmentId);
+  touchWorkspaceRecord(item);
+  recordDefectHistory(item, 'removed attachment', target?.name || attachmentId || 'attachment');
+  scheduleFeatureWrite(featureId);
+  rerenderCurrentFeature();
+  if (attachmentId) driveDeleteFile(attachmentId).catch(() => {});
 }
 
 function addDefectComment(featureId, itemId){
@@ -1542,9 +1685,12 @@ function addDefectComment(featureId, itemId){
   if (!text) return;
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
   const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
+  normalizeDefectRecord(item);
   if (!Array.isArray(item.comments)) item.comments = [];
-  item.comments.unshift({ id: makeWorkspaceId('CMT'), author: getCurrentActor(), text, createdAt: new Date().toISOString() });
-  item.updatedAt = new Date().toISOString();
+  const comment = { id: makeWorkspaceId('CMT'), author: getCurrentActor(), text, createdAt: new Date().toISOString() };
+  item.comments.unshift(comment);
+  touchWorkspaceRecord(item);
+  recordDefectHistory(item, 'commented', text.slice(0, 80));
   scheduleFeatureWrite(featureId);
   rerenderCurrentFeature();
 }
@@ -1553,6 +1699,8 @@ function removeDefect(featureId, itemId){
   if (!ensureWritable()) return;
   openConfirmModal('ลบ Defect', 'ต้องการลบ defect นี้ใช่ไหม?', () => {
     const store = normalizeWorkspaceCollections(featureId); if (!store) return;
+    const item = store.defects.find(entry => entry.id === itemId);
+    (item?.attachments || []).forEach(att => { if (att?.id) driveDeleteFile(att.id).catch(() => {}); });
     store.defects = store.defects.filter(entry => entry.id !== itemId);
     scheduleFeatureWrite(featureId);
     rerenderCurrentFeature();

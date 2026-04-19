@@ -673,13 +673,13 @@ async function deleteFeature(featureId: string, fileId = "") {
   return { ok: true, deleted: true, deletedImageFolders };
 }
 
-async function uploadImages(req: Request) {
+async function uploadFilesToFolder(req: Request) {
   const bootstrap = await ensureBootstrap();
   const form = await req.formData();
-  const caseId = String(form.get("caseId") || "").trim();
-  if (!caseId) throw new Error("caseId is required");
+  const folderKey = String(form.get("folderKey") || form.get("caseId") || "").trim();
+  if (!folderKey) throw new Error("folderKey is required");
 
-  const caseFolderId = await ensureFolder(caseId, bootstrap.imagesFolderId);
+  const caseFolderId = await ensureFolder(folderKey, bootstrap.imagesFolderId);
   const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
   if (!files.length) throw new Error("No files uploaded");
 
@@ -903,8 +903,8 @@ Deno.serve(async (req) => {
       return jsonResponse(await upsertStatusFile(await req.json()));
     }
 
-    if (req.method === "POST" && action === "image-upload") {
-      return jsonResponse(await uploadImages(req));
+    if (req.method === "POST" && (action === "image-upload" || action === "attachment-upload")) {
+      return jsonResponse(await uploadFilesToFolder(req));
     }
 
     if (req.method === "DELETE" && action === "feature-delete") {
