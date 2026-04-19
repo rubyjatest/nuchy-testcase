@@ -1,64 +1,467 @@
-// ── QA TEST CASES — v7 ──
-// Auth : Supabase (email/password)  → ตรวจสอบว่าเป็น user ที่อนุญาต
-// Data : Google Drive (Service Account) → ทุกคนใช้ folder เดียวกันอัตโนมัติ
-//        แต่ละ feature = ไฟล์ JSON แยก  /qa-testcases/<featureId>.json
-//        รูปภาพ        = /qa-testcases/images/<caseId>/<filename>
+// ── QA TEST CASES — v8 ──
+// Auth : Supabase (email/password)
+// Data : Google Drive only ผ่าน Supabase Edge Function proxy
+//        - status.json
+//        - features/<featureId>.json
+//        - images/<caseId>/<filename>
 
 // ══════════════════════════════════════════
 //  🔧 CONFIG
 // ══════════════════════════════════════════
 const SUPABASE_URL      = 'https://kgwuakgtnvcvnybipqyz.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtnd3Vha2d0bnZjdm55YmlwcXl6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0MTYxMDQsImV4cCI6MjA5MTk5MjEwNH0.pgkW0qdi4EDz5h5lju_eoNY7oWIvw6fpvTBzO7YQB_E';
+const DRIVE_PROXY_URL   = `${SUPABASE_URL}/functions/v1/drive-proxy`;
 
-// ── Service Account สำหรับ Google Drive ─────────────────────────────────
-// folder "qa-testcases" ใน Drive ของ testbulk87@gmail.com
-// ถูก share ให้ service account นี้เป็น Editor แล้ว
-const SA_EMAIL   = 'qa-test-cases@nuchy-testcase.iam.gserviceaccount.com';
-const SA_KEY_ID  = 'deb69e16caf2b583b404b0a7e1f347753e53d765';
-const SA_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDDbLeF/dUaBFKz
-TUHZdLwoHuSoLL+KnEF2Pa6y84hCH/GeNzwujfd8PNH+JC8WysOu2qIgSjfvXH3Z
-YVVKgR/9ifnauUSYr2Renj8oSzd/TqkbBJNWlnwBXMkGivbnb/pgnpYHkpJA6vSI
-h/UU5im2Hn38cliE6chKRWdqTHAYWt/C1pKuYIACWd5Aqnon3cmRgtekJCIPbr8o
-/pZgJDiz7RMHMSqoJr4TlxQw8JMiJj6ZkMzfkf7bTi6ZOcMOR4kSPJ9wVp/vUrHc
-KWP+ifS2skCAlWbqBZjUiRQ7TEO6Vph4bs/vbtftfXcIFaiAB9EuxqflKVUms276
-b+LqsTz1AgMBAAECggEAAgfPUQSXxaInT2FJ13t97+Hkg4sLCjknvaLUGiNXiCcF
-0PHAFrf3PNSBK55w9iVi3JAvGWUfk8V/h0C+0GbAgfOc47T1NKvQ+OIKJ58w5Qof
-sVpzba6ctVh4n8zVuc3FxfA6jrrOpBt7FNoVOxjcAt4/dhb510HsJR1pYmOHtYZj
-h7GsZBZ8ndTMBH8TWTUdj+yiJ8sG2/1umwRKb3nqyuYmKewdhVfySpbRDaRv6N8U
-YAFULHIM18cEd6CR/7fHHoDgKq3EC2rxtJ/qMrrnxPBs/vJQsvZvIVScRsUgILss
-5+oVYjUj7j4F5SCASe7R/MHRonA4fCAltlyix1Cq9wKBgQDzSIvNscrBVEVzrPcS
-IYrHSL7NR6fr4vHolTAnYM6gHlt0iG+BjSrtOKsefiQH/BUufUVolgEcxKyOaAjT
-kqLWW3EuabtAWq38wM8poqiHTboeLe3fFbBGMjE/hEHyrWXK5e60mFNvqjzFWW+K
-EaDKmD4nOgm9aSKXm5qr/B1BhwKBgQDNo8IEgdzjrMaMIowNgLAp49rBXxG4GXSS
-vOhERMXsqC3oEhYFCk7Zh8aP36UXWFKNampHEbH7x8bGBmcGTrfJWmryX5X7/V7B
-bLM01RBr0YjwvuTm0awnIi30vIdGOQrWj69NNgkUfcBBjSp2qGIAVbvsR+1utyqv
-nvKHDFxcowKBgQDj7/WkrE62ollMDyOSJkEbhEnYlal8Ni7G5niufGI73RV88pPe
-wsAUcMLLGA50OLgzzYUpf1nddVvjNRAIAtx0kEpT3RZnLk7TgGbYsKDL3IRj4E59
-dJmquz4vL6CGWfYEizgClrGd7tdvY+NAblHDX67kG9miUI3rlAvv1ZAnowKBgDWf
-CttkBXY0uj0WURDASq9Ro9wibxtjP9t3eNU8XaPdIsNN3AIKcw8T8XnYplLVDAmm
-AvpvKcruh+1hBAJICnJtqk9zD0f7BHdJYd1X5YVHyP6FuGhbqhk2N2eGtXthKmtS
-YjKu8WUveS9eoQD53TwbHvp4svfYuT+8IZ+HYJojAoGAHRM345ZPd/fBS5mr1OuO
-7PGnO83qG/LqzQxuiC0POz/Pi8OtlxU87vLAJIh2LVhjcSTKl3k1o3gtMk0+V82N
-N65RX8C7VeYhunJOmgKDOOiCC+Q/yD+bk53bl+nMWjMzWNnVNvBFDvydgNBmWRDi
-ZLytyYYkEWtpjgVRb8rWxc8=
------END PRIVATE KEY-----`;
+const APP_MODE = {
+  DRIVE: 'drive',
+  FALLBACK: 'fallback',
+};
 
-const DRIVE_API    = 'https://www.googleapis.com/drive/v3';
-const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
-const DRIVE_FOLDER = 'qa-testcases';  // folder ที่ share ให้ service account แล้ว
+let currentAppMode = APP_MODE.DRIVE;
+let lastDriveError = null;
+let lastDriveDiagnostic = null;
+let gWriteQueue = {};
+let DB = { features: {}, status: {}, deletedCases: [], executions: {} };
+let DB_READY = false;
+let currentTheme = 'light';
+let activeSortMode = 'id-asc';
+let DRIVE_STATE = {
+  rootFolderId: null,
+  rootFolderName: '',
+  featuresFolderId: null,
+  imagesFolderId: null,
+  statusFileId: null,
+};
 
-// ══════════════════════════════════════════
-//  SUPABASE AUTH
-// ══════════════════════════════════════════
+const SORT_MODES = ['id-asc', 'id-desc', 'title-asc', 'title-desc'];
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildErrorMessage(err) {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  return err.payload?.error || err.message || 'Unknown error';
+}
+
+function isValidHexColor(value) {
+  return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(value || '').trim());
+}
+
+function hexToRgba(hexColor, alpha = 1) {
+  const hex = String(hexColor || '').trim().replace('#', '');
+  if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(hex)) return '';
+  const full = hex.length === 3 ? hex.split('').map(ch => ch + ch).join('') : hex;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function parseFeatureTagsInput(rawText, defaultBadgeClass) {
+  const lines = String(rawText || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  return lines.map(line => {
+    const [labelPart, colorPartRaw] = line.split('|');
+    const label = (labelPart || '').trim();
+    const colorPart = (colorPartRaw || '').trim();
+    if (!label) return null;
+    if (isValidHexColor(colorPart)) {
+      return {
+        label,
+        style: 'badge-custom',
+        color: colorPart,
+        bg: hexToRgba(colorPart, 0.13),
+        border: hexToRgba(colorPart, 0.36),
+      };
+    }
+    return { label, style: defaultBadgeClass };
+  }).filter(Boolean);
+}
+
+function renderFeatureTag(tag) {
+  const label = escapeHtml(tag?.label || '');
+  if (!label) return '';
+  if (tag?.style === 'badge-custom' && tag?.color && tag?.bg && tag?.border) {
+    return `<span class="badge badge-custom" style="color:${escapeHtml(tag.color)};background:${escapeHtml(tag.bg)};border-color:${escapeHtml(tag.border)};">${label}</span>`;
+  }
+  const styleClass = /^badge-[a-z0-9-]+$/.test(tag?.style || '') ? tag.style : 'badge-gray';
+  return `<span class="badge ${styleClass}">${label}</span>`;
+}
+
+function parseScreenLineInput(line) {
+  const [namePart, colorPartRaw] = String(line || '').split('|');
+  const name = (namePart || '').trim();
+  const colorToken = (colorPartRaw || '').trim().toLowerCase();
+  return { name, colorToken };
+}
+
+function buildScreenStyleFromToken(colorToken) {
+  if (!colorToken) return null;
+  if (SCREEN_THEME_COLORS[colorToken]) return SCREEN_THEME_COLORS[colorToken];
+  if (isValidHexColor(colorToken)) {
+    return {
+      color: colorToken,
+      bg: hexToRgba(colorToken, 0.12),
+      border: hexToRgba(colorToken, 0.34),
+    };
+  }
+  return null;
+}
+
+function getBundledFeatureTemplates() {
+  const features = [];
+  if (typeof XRAY_META !== 'undefined' && typeof XRAY_CASES !== 'undefined') {
+    features.push({ meta: XRAY_META, cases: XRAY_CASES });
+  }
+  if (typeof AUTH_META !== 'undefined' && typeof AUTH_CASES !== 'undefined') {
+    features.push({ meta: AUTH_META, cases: AUTH_CASES });
+  }
+  return features;
+}
+
+function seedBundledData() {
+  DB = { features: {}, status: {}, deletedCases: [], executions: {} };
+  getBundledFeatureTemplates().forEach(feature => {
+    DB.features[feature.meta.id] = {
+      meta: cloneJson(feature.meta),
+      cases: cloneJson(feature.cases),
+      fileId: null,
+    };
+  });
+}
+
+function getAccessToken() {
+  return localStorage.getItem('qa_access_token') || '';
+}
+
+function updateThemeToggleButton() {
+  const btn = document.getElementById('theme-toggle-btn');
+  if (!btn) return;
+  if (currentTheme === 'dark') {
+    btn.textContent = '☀️ Light';
+    btn.title = 'Switch to light mode';
+  } else {
+    btn.textContent = '🌙 Dark';
+    btn.title = 'Switch to dark mode';
+  }
+}
+
+function setTheme(mode, persist = true) {
+  const next = mode === 'dark' ? 'dark' : 'light';
+  currentTheme = next;
+  document.body.setAttribute('data-theme', next);
+  if (persist) localStorage.setItem('qa_theme', next);
+  updateThemeToggleButton();
+}
+
+function initTheme() {
+  const saved = (localStorage.getItem('qa_theme') || '').trim();
+  if (saved === 'dark' || saved === 'light') {
+    setTheme(saved, false);
+    return;
+  }
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  setTheme(prefersDark ? 'dark' : 'light', false);
+}
+
+function toggleTheme() {
+  setTheme(currentTheme === 'dark' ? 'light' : 'dark');
+}
+
+function getInitialSortMode() {
+  const saved = (localStorage.getItem('qa_sort_mode') || '').trim();
+  return SORT_MODES.includes(saved) ? saved : 'id-asc';
+}
+
+initTheme();
+activeSortMode = getInitialSortMode();
+
+function buildAuthHeaders(extra = {}) {
+  const headers = new Headers(extra);
+  headers.set('apikey', SUPABASE_ANON_KEY);
+  const token = getAccessToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  return headers;
+}
+
+async function driveProxyRequest(action, {
+  method = 'GET',
+  body,
+  query = {},
+  formData,
+} = {}) {
+  const url = new URL(DRIVE_PROXY_URL);
+  if (action) url.searchParams.set('action', action);
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  });
+
+  const headers = buildAuthHeaders();
+  const options = { method, headers };
+
+  if (formData) {
+    options.body = formData;
+  } else if (body !== undefined) {
+    headers.set('Content-Type', 'application/json');
+    options.body = JSON.stringify(body);
+  }
+
+  const res = await fetch(url.toString(), options);
+  const contentType = res.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await res.json().catch(() => ({}))
+    : await res.text().catch(() => '');
+
+  if (!res.ok) {
+    const err = new Error(payload?.error || payload?.message || `Drive proxy failed (${res.status})`);
+    err.status = res.status;
+    err.payload = payload;
+    throw err;
+  }
+
+  return payload;
+}
+
+function normalizeDiagnosticsPayload(payload) {
+  if (isPlainObject(payload) && Array.isArray(payload.checks)) {
+    const recommendations = Array.isArray(payload.recommendations) ? payload.recommendations : [];
+    return {
+      ...payload,
+      recommendations,
+      rawPayload: payload,
+    };
+  }
+
+  const checks = [];
+  const looksLikeLegacyPayload = isPlainObject(payload) &&
+    ('version' in payload || 'customFeatures' in payload || 'customCases' in payload);
+
+  if (looksLikeLegacyPayload) {
+    checks.push({
+      key: 'diagnostics.payload_shape',
+      ok: false,
+      detail: 'Drive proxy ตอบกลับเป็น payload รูปแบบเก่า (version/customFeatures/customCases) ไม่ใช่ diagnostics',
+    });
+  } else if (isPlainObject(payload)) {
+    checks.push({
+      key: 'diagnostics.payload_shape',
+      ok: false,
+      detail: 'Drive proxy ตอบกลับมา แต่รูปแบบข้อมูลไม่ตรงกับ diagnostics ที่หน้าเว็บต้องใช้',
+    });
+  } else {
+    checks.push({
+      key: 'diagnostics.payload_shape',
+      ok: false,
+      detail: 'Drive proxy ไม่ได้ส่ง JSON diagnostics กลับมา',
+    });
+  }
+
+  if (DRIVE_STATE.rootFolderId) {
+    checks.push({
+      key: 'drive.bootstrap_state',
+      ok: true,
+      detail: `โหลด bootstrap สำเร็จ: root folder ${DRIVE_STATE.rootFolderId}`,
+    });
+  }
+
+  return {
+    ok: false,
+    authMode: 'unknown',
+    rootFolderId: DRIVE_STATE.rootFolderId || null,
+    serviceAccountEmail: null,
+    checks,
+    recommendations: [
+      'ตรวจสอบว่า deploy ฟังก์ชัน drive-proxy เวอร์ชันล่าสุดแล้ว',
+      'ถ้ายังเป็นเวอร์ชันเก่า ให้ deploy ใหม่ แล้วลองกด Drive Debug อีกครั้ง',
+    ],
+    rawPayload: payload,
+  };
+}
+
+async function fetchDriveDiagnostics(writeCheck = false) {
+  const payload = await driveProxyRequest('diagnostics', {
+    query: { writeCheck: writeCheck ? '1' : '0' },
+  });
+  const diag = normalizeDiagnosticsPayload(payload);
+  lastDriveDiagnostic = diag;
+  return diag;
+}
+
+function renderDiagnosticsHtml(diagnostics, errorMessage = '') {
+  const checks = Array.isArray(diagnostics?.checks) ? diagnostics.checks : [];
+  const recs = diagnostics?.recommendations || [];
+  const rawSource = diagnostics?.rawPayload ?? diagnostics;
+  const raw = rawSource ? JSON.stringify(rawSource, null, 2) : '';
+  const rootFolderLabel = diagnostics?.rootFolderId || DRIVE_STATE.rootFolderId || 'ไม่พบ';
+  const checksHtml = checks.length
+    ? checks.map(check => `
+            <div style="padding:10px 12px;border:1px solid ${check.ok ? 'var(--green-border)' : 'var(--red-border)'};background:${check.ok ? 'var(--green-bg)' : 'var(--red-bg)'};border-radius:8px;">
+              <div style="font-size:12px;font-weight:600;color:${check.ok ? 'var(--green)' : 'var(--red)'};">${check.ok ? '✓' : '✗'} ${escapeHtml(check.key)}</div>
+              <div style="font-size:12px;color:var(--text2);margin-top:2px;line-height:1.6;">${escapeHtml(check.detail)}</div>
+            </div>`).join('')
+    : `<div style="padding:10px 12px;border:1px dashed var(--border);background:var(--surface2);border-radius:8px;font-size:12px;color:var(--text3);">
+         ไม่พบรายการตรวจสอบจาก backend
+       </div>`;
+  return `
+    <div class="modal-header">
+      <span class="modal-title">🧪 Drive Diagnostics</span>
+      <span class="modal-sub">${escapeHtml(diagnostics?.authMode || 'unknown')}</span>
+    </div>
+    <div class="modal-body">
+      ${errorMessage ? `<div class="form-error" style="display:block;">${escapeHtml(errorMessage)}</div>` : ''}
+      <div style="font-size:12px;color:var(--text2);line-height:1.8;background:var(--surface2);border:1px solid var(--border);padding:12px;border-radius:8px;">
+        <div><strong>Root folder:</strong> ${escapeHtml(rootFolderLabel)}</div>
+        <div><strong>Service account:</strong> ${escapeHtml(diagnostics?.serviceAccountEmail || '-')}</div>
+      </div>
+      <div>
+        <div class="detail-section-title" style="margin-bottom:8px;">Checks</div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${checksHtml}
+        </div>
+      </div>
+      ${recs.length ? `
+        <div>
+          <div class="detail-section-title" style="margin-bottom:8px;">Recommendations</div>
+          <ul class="detail-list expect-list">${recs.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        </div>` : ''}
+      <div>
+        <div class="detail-section-title" style="margin-bottom:8px;">Raw JSON</div>
+        <textarea class="form-textarea" readonly style="min-height:220px;font-family:'IBM Plex Mono',monospace;">${escapeHtml(raw)}</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ปิด</button>
+      <button class="btn-modal-ok" onclick="copyDriveDiagnostics()">คัดลอก JSON</button>
+    </div>`;
+}
+
+async function copyDriveDiagnostics() {
+  if (!lastDriveDiagnostic) return;
+  await navigator.clipboard.writeText(JSON.stringify(lastDriveDiagnostic, null, 2));
+  alert('คัดลอก diagnostics แล้ว');
+}
+
+async function openDriveDiagnostics() {
+  showLoadingOverlay('กำลังตรวจสอบ Google Drive...');
+  let errorMessage = '';
+  try {
+    await fetchDriveDiagnostics(true);
+  } catch (err) {
+    errorMessage = buildErrorMessage(err);
+    if (err.payload?.diagnostics) {
+      lastDriveDiagnostic = err.payload.diagnostics;
+    }
+  } finally {
+    hideLoadingOverlay();
+  }
+
+  openModal('drive-diagnostics-modal', renderDiagnosticsHtml(lastDriveDiagnostic, errorMessage));
+}
+
+function showFallbackBanner(message) {
+  let el = document.getElementById('storage-mode-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'storage-mode-banner';
+    el.style.cssText = 'position:sticky;top:112px;z-index:85;background:#FFF8E6;border-bottom:1px solid #F5D68A;padding:10px 16px;font-size:12px;color:#8A5200;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;';
+    document.body.insertBefore(el, document.querySelector('.main'));
+  }
+  el.innerHTML = `
+    <span>กำลังแสดงข้อมูลสำรองแบบอ่านอย่างเดียว เพราะ Google Drive เชื่อมต่อไม่ได้${message ? `: <strong>${escapeHtml(message)}</strong>` : ''}</span>
+    <button onclick="retryDriveConnect()" style="padding:5px 12px;background:#FFF;border:1px solid #F5D68A;border-radius:8px;cursor:pointer;color:#8A5200;font:inherit;">ลองเชื่อมต่อใหม่</button>`;
+  el.style.display = 'flex';
+}
+
+function hideFallbackBanner() {
+  const el = document.getElementById('storage-mode-banner');
+  if (el) el.style.display = 'none';
+}
+
+async function useBundledFallback(err) {
+  currentAppMode = APP_MODE.FALLBACK;
+  lastDriveError = err;
+  if (err?.payload?.diagnostics) {
+    lastDriveDiagnostic = err.payload.diagnostics;
+  } else {
+    try {
+      await fetchDriveDiagnostics(true);
+    } catch {}
+  }
+  seedBundledData();
+  hideLoadingOverlay();
+  hideSavingIndicator();
+  showFallbackBanner(buildErrorMessage(err));
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  document.getElementById('drive-status-badge').style.display = 'none';
+  init();
+}
+
+function ensureWritable() {
+  if (currentAppMode === APP_MODE.DRIVE && DB_READY) return true;
+  alert('Google Drive ยังเชื่อมต่อไม่ได้ ตอนนี้จึงเปิดได้เฉพาะโหมดดูข้อมูลชั่วคราว');
+  return false;
+}
+
+function getStatus(id)       { return DB.status[id] || 'no-run'; }
+function getDeletedSet()     { return new Set(DB.deletedCases); }
+function getExecutionMeta(id){ return DB.executions?.[id] || null; }
+
+function getExecutorNameList() {
+  const fromDb = Object.values(DB.executions || {})
+    .map(item => String(item?.executor || '').trim())
+    .filter(Boolean);
+  let fromLocal = [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem('qa_executor_name_list') || '[]');
+    if (Array.isArray(parsed)) {
+      fromLocal = parsed.map(name => String(name || '').trim()).filter(Boolean);
+    }
+  } catch {}
+  return [...new Set([...fromLocal, ...fromDb])];
+}
+
+function rememberExecutorName(name) {
+  const normalized = String(name || '').trim();
+  if (!normalized) return;
+  const current = getExecutorNameList().filter(item => item !== normalized);
+  const next = [normalized, ...current].slice(0, 30);
+  localStorage.setItem('qa_executor_name_list', JSON.stringify(next));
+}
+
 async function handleLogin() {
   const email    = document.getElementById('auth-email').value.trim();
   const password = document.getElementById('auth-password').value;
   const errEl    = document.getElementById('login-error');
   const btn      = document.getElementById('btn-login');
   errEl.style.display = 'none';
-  if (!email || !password) { errEl.textContent = 'กรุณากรอก Email และ Password'; errEl.style.display = 'block'; return; }
-  btn.textContent = 'กำลังเข้าสู่ระบบ...'; btn.disabled = true;
+  if (!email || !password) {
+    errEl.textContent = 'กรุณากรอก Email และ Password';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.textContent = 'กำลังเข้าสู่ระบบ...';
+  btn.disabled = true;
   try {
     const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
       method: 'POST',
@@ -68,392 +471,253 @@ async function handleLogin() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error_description || d.msg || 'Login failed');
     localStorage.setItem('qa_access_token', d.access_token);
-    // ── auto-connect Drive ด้วย Service Account ทันที ──
     await connectDriveWithServiceAccount();
   } catch (err) {
     errEl.textContent = err.message === 'Invalid login credentials' ? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' : err.message;
     errEl.style.display = 'block';
-    btn.textContent = 'เข้าสู่ระบบ'; btn.disabled = false;
+    btn.textContent = 'เข้าสู่ระบบ';
+    btn.disabled = false;
   }
 }
 
 function handleLogout() {
   localStorage.removeItem('qa_access_token');
-  gAccessToken = null; gFolderId = null; DB_READY = false; saTokenExpiry = 0;
+  currentAppMode = APP_MODE.DRIVE;
+  lastDriveError = null;
+  lastDriveDiagnostic = null;
+  DB_READY = false;
   location.reload();
 }
 
-function retryDriveConnect() {
+async function retryDriveConnect() {
   document.getElementById('drive-expired-banner').style.display = 'none';
-  connectDriveWithServiceAccount();
+  await connectDriveWithServiceAccount();
 }
 
-// ══════════════════════════════════════════
-//  GOOGLE DRIVE — SERVICE ACCOUNT
-// ══════════════════════════════════════════
-let gAccessToken = null;
-let gFolderId    = null;   // ID ของ folder qa-testcases
-let gImgFolderId = null;   // ID ของ folder images ภายใน qa-testcases
-let gWriteQueue  = {};     // featureId → setTimeout handle
-let saTokenExpiry = 0;     // timestamp ms ที่ token จะหมดอายุ
-
-// ── สร้าง JWT และขอ access token จาก Google ──
-async function getServiceAccountToken() {
-  // ยังใช้ได้อยู่ (เหลือ > 5 นาที) → ไม่ต้อง refresh
-  if (gAccessToken && Date.now() < saTokenExpiry - 300_000) return;
-
-  const now = Math.floor(Date.now() / 1000);
-  const header  = { alg: 'RS256', typ: 'JWT', kid: SA_KEY_ID };
-  const payload = {
-    iss: SA_EMAIL,
-    scope: 'https://www.googleapis.com/auth/drive',
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-  };
-
-  // base64url encode
-  const b64url = obj =>
-    btoa(JSON.stringify(obj))
-      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-
-  const signingInput = `${b64url(header)}.${b64url(payload)}`;
-
-  // import private key
-  const pemStripped = SA_PRIVATE_KEY
-    .replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----/g, '')
-    .replace(/\s+/g, '');
-  const keyBytes = Uint8Array.from(atob(pemStripped), c => c.charCodeAt(0));
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8', keyBytes,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false, ['sign']
-  );
-
-  // sign
-  const sigBuf = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5', cryptoKey,
-    new TextEncoder().encode(signingInput)
-  );
-  const sig = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-
-  const jwt = `${signingInput}.${sig}`;
-
-  // แลก JWT → access token
-  const resp = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
-  });
-  if (!resp.ok) {
-    const e = await resp.json().catch(() => ({}));
-    throw new Error(`Service account auth failed: ${e.error_description || resp.status}`);
-  }
-  const data = await resp.json();
-  gAccessToken  = data.access_token;
-  saTokenExpiry = Date.now() + data.expires_in * 1000;
-}
-
-// ── เรียกตอน page load (ถ้ามี Supabase token อยู่แล้ว) หรือหลัง login ──
 async function connectDriveWithServiceAccount() {
-  showLoadingOverlay('กำลังเชื่อมต่อ Google Drive...');
+  showLoadingOverlay('กำลังโหลดข้อมูล');
   try {
-    await getServiceAccountToken();
     await loadAllData();
   } catch (err) {
-    hideLoadingOverlay();
-    showDBError(err);
+    await useBundledFallback(err);
   }
 }
 
-// ── page init: ถ้ายังมี Supabase session อยู่ → auto-connect ──
 (async () => {
-  const supToken = localStorage.getItem('qa_access_token');
+  const supToken = getAccessToken();
   if (supToken) {
     document.getElementById('login-overlay').style.display = 'flex';
     await connectDriveWithServiceAccount();
   }
 })();
 
-function driveH(extra = {}) {
-  return { Authorization: `Bearer ${gAccessToken}`, ...extra };
-}
-
-// ── ค้นหา/สร้าง folder ──────────────────
-async function getOrCreateFolder(name, parentId = null) {
-  const parentQ = parentId ? ` and '${parentId}' in parents` : '';
-  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQ}`;
-  const r = await fetch(
-    `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&includeItemsFromAllDrives=true&supportsAllDrives=true`,
-    { headers: driveH() }
-  );
-  if (r.status === 401) throw new Error('UNAUTHORIZED');
-  const d = await r.json();
-  if (d.files && d.files.length > 0) return d.files[0].id;
-
-  // สร้างใหม่
-  const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
-  if (parentId) meta.parents = [parentId];
-  const cr = await fetch(`${DRIVE_API}/files?supportsAllDrives=true`, {
+async function persistFeatureFile(featureId) {
+  const f = DB.features[featureId];
+  if (!f) return;
+  const result = await driveProxyRequest('feature-upsert', {
     method: 'POST',
-    headers: driveH({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(meta),
+    body: {
+      featureId,
+      meta: f.meta,
+      cases: f.cases,
+      fileId: f.fileId || '',
+    },
   });
-  if (!cr.ok) throw new Error(`Create folder failed: ${cr.status}`);
-  return (await cr.json()).id;
+  f.fileId = result.fileId || f.fileId;
 }
 
-// ── อ่าน/เขียน JSON ไฟล์ ────────────────
-async function driveReadJson(fileId) {
-  const r = await fetch(`${DRIVE_API}/files/${fileId}?alt=media`, { headers: driveH() });
-  if (r.status === 401) throw new Error('UNAUTHORIZED');
-  if (!r.ok) throw new Error(`Read failed: ${r.status}`);
-  return r.json();
-}
-
-async function driveWriteJson(fileId, data) {
-  const r = await fetch(`${DRIVE_UPLOAD}/files/${fileId}?uploadType=media&supportsAllDrives=true`, {
-    method: 'PATCH',
-    headers: driveH({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(data),
-  });
-  if (r.status === 401) { onDriveTokenExpired(); throw new Error('UNAUTHORIZED'); }
-  if (!r.ok) throw new Error(`Write failed: ${r.status}`);
-}
-
-async function driveCreateJson(name, parentId, data) {
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify({ name, parents: [parentId] })], { type: 'application/json' }));
-  form.append('media', new Blob([JSON.stringify(data)], { type: 'application/json' }));
-  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id&supportsAllDrives=true`, {
-    method: 'POST', headers: driveH(), body: form,
-  });
-  if (!r.ok) throw new Error(`Create file failed: ${r.status}`);
-  return (await r.json()).id;
-}
-
-async function driveFindFile(name, parentId) {
-  const q = `name='${name}' and '${parentId}' in parents and trashed=false`;
-  const r = await fetch(
-    `${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id)&includeItemsFromAllDrives=true&supportsAllDrives=true`,
-    { headers: driveH() }
-  );
-  if (r.status === 401) throw new Error('UNAUTHORIZED');
-  const d = await r.json();
-  return d.files?.[0]?.id || null;
-}
-
-// ── Upload รูปภาพ ─────────────────────────
-async function driveUploadImage(file, caseId) {
-  // หรือสร้าง images/<caseId> folder
-  let caseFolderId = await getOrCreateFolder(caseId, gImgFolderId);
-  const form = new FormData();
-  form.append('metadata', new Blob([JSON.stringify({
-    name: file.name,
-    parents: [caseFolderId],
-  })], { type: 'application/json' }));
-  form.append('media', file);
-  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink&supportsAllDrives=true`, {
-    method: 'POST', headers: driveH(), body: form,
-  });
-  if (!r.ok) throw new Error(`Upload image failed: ${r.status}`);
-  const d = await r.json();
-  // Make file publicly readable
-  await fetch(`${DRIVE_API}/files/${d.id}/permissions`, {
-    method: 'POST',
-    headers: driveH({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ role: 'reader', type: 'anyone' }),
-  });
-  return {
-    id: d.id,
-    name: d.name,
-    url: `https://lh3.googleusercontent.com/d/${d.id}`,
-    viewUrl: d.webViewLink,
-  };
-}
-
-async function driveDeleteFile(fileId) {
-  await fetch(`${DRIVE_API}/files/${fileId}?supportsAllDrives=true`, { method: 'DELETE', headers: driveH() });
-}
-
-async function onDriveTokenExpired() {
-  // Service account token หมดอายุ → ขอใหม่อัตโนมัติ แทนที่จะให้ user กดเอง
+async function writeFeatureFile(featureId) {
+  await persistFeatureFile(featureId);
   hideSavingIndicator();
-  try {
-    await getServiceAccountToken();
-  } catch {
-    document.getElementById('drive-expired-banner').style.display = 'flex';
+}
+
+async function writeStatusFile() {
+  await driveProxyRequest('status-upsert', {
+    method: 'POST',
+    body: {
+      status: DB.status,
+      deletedCases: DB.deletedCases,
+      executions: DB.executions || {},
+    },
+  });
+  hideSavingIndicator();
+}
+
+function handleDriveMutationError(err) {
+  lastDriveError = err;
+  if (err?.payload?.diagnostics) lastDriveDiagnostic = err.payload.diagnostics;
+  hideSavingIndicator();
+  document.getElementById('drive-expired-banner').style.display = 'flex';
+  console.error('Drive mutation error', err);
+}
+
+async function seedBundledFeaturesIfNeeded() {
+  if (Object.keys(DB.features).length > 0) return;
+  const templates = getBundledFeatureTemplates();
+  if (!templates.length) return;
+
+  showLoadingOverlay('กำลังโหลด feature เริ่มต้น...');
+  for (const template of templates) {
+    DB.features[template.meta.id] = {
+      meta: cloneJson(template.meta),
+      cases: cloneJson(template.cases),
+      fileId: null,
+    };
+    await persistFeatureFile(template.meta.id);
   }
 }
-
-// ══════════════════════════════════════════
-//  IN-MEMORY DB  (per-feature files)
-// ══════════════════════════════════════════
-// DB.features[featureId] = { meta, cases:[], fileId }
-// DB.status = { caseId: status }  → เก็บใน status.json
-// DB.deletedCases = [...]         → เก็บใน status.json ด้วย
-let DB = { features: {}, status: {}, deletedCases: [] };
-let DB_READY = false;
-let gStatusFileId = null;
 
 async function loadAllData() {
-  showLoadingOverlay('กำลังเชื่อมต่อ Google Drive...');
-  try {
-    // ค้นหา / สร้าง root folder
-    gFolderId    = await getOrCreateFolder(DRIVE_FOLDER);
-    gImgFolderId = await getOrCreateFolder('images', gFolderId);
+  showLoadingOverlay('กำลังโหลดข้อมูล');
+  const payload = await driveProxyRequest('bootstrap');
+  DRIVE_STATE = {
+    rootFolderId: payload.rootFolderId || null,
+    rootFolderName: payload.rootFolderName || '',
+    featuresFolderId: payload.featuresFolderId || null,
+    imagesFolderId: payload.imagesFolderId || null,
+    statusFileId: payload.statusFileId || null,
+  };
 
-    // โหลด status.json
-    showLoadingOverlay('กำลังโหลด status...');
-    let statusId = await driveFindFile('status.json', gFolderId);
-    if (!statusId) {
-      statusId = await driveCreateJson('status.json', gFolderId, { status: {}, deletedCases: [] });
-    }
-    gStatusFileId = statusId;
-    const statusData = await driveReadJson(statusId);
-    DB.status       = statusData.status       || {};
-    DB.deletedCases = statusData.deletedCases || [];
+  DB = {
+    features: {},
+    status: payload.status || {},
+    deletedCases: payload.deletedCases || [],
+    executions: payload.executions || {},
+  };
+  (payload.features || []).forEach(feature => {
+    const featureId = feature.featureId || feature.meta?.id;
+    if (!featureId) return;
+    DB.features[featureId] = {
+      meta: feature.meta,
+      cases: feature.cases || [],
+      fileId: feature.fileId || null,
+    };
+  });
 
-    // list ไฟล์ feature *.json (ยกเว้น status.json)
-    showLoadingOverlay('กำลังโหลด features...');
-    const q = `'${gFolderId}' in parents and name != 'status.json' and mimeType='application/json' and trashed=false`;
-    const lr = await fetch(`${DRIVE_API}/files?q=${encodeURIComponent(q)}&fields=files(id,name)&includeItemsFromAllDrives=true&supportsAllDrives=true`, { headers: driveH() });
-    if (lr.status === 401) throw new Error('UNAUTHORIZED');
-    const listed = (await lr.json()).files || [];
-
-    DB.features = {};
-    await Promise.all(listed.map(async f => {
-      try {
-        const data = await driveReadJson(f.id);
-        const fid = data.meta?.id || f.name.replace('.json','');
-        DB.features[fid] = { meta: data.meta, cases: data.cases || [], fileId: f.id };
-      } catch {}
-    }));
-
-    DB_READY = true;
-    hideLoadingOverlay();
-    document.getElementById('login-overlay').style.display = 'none';
-    document.getElementById('drive-expired-banner').style.display = 'none';
-    document.getElementById('drive-status-badge').style.display = 'inline-flex';
-    init();
-  } catch (err) {
-    hideLoadingOverlay();
-    if (err.message === 'UNAUTHORIZED') {
-      await onDriveTokenExpired();
-      // ลอง loadAllData อีกครั้งถ้า token refresh สำเร็จ
-      if (gAccessToken) { await loadAllData(); return; }
-      document.getElementById('login-overlay').style.display = 'flex';
-    } else {
-      showDBError(err);
-    }
-  }
+  currentAppMode = APP_MODE.DRIVE;
+  DB_READY = true;
+  await seedBundledFeaturesIfNeeded();
+  hideLoadingOverlay();
+  hideFallbackBanner();
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  document.getElementById('drive-status-badge').style.display = 'inline-flex';
+  init();
 }
 
-// ── schedule write per feature (debounce 800ms) ─
 function scheduleFeatureWrite(featureId) {
   showSavingIndicator();
   clearTimeout(gWriteQueue[featureId]);
-  gWriteQueue[featureId] = setTimeout(() => writeFeatureFile(featureId), 800);
+  gWriteQueue[featureId] = setTimeout(() => {
+    writeFeatureFile(featureId).catch(handleDriveMutationError);
+  }, 800);
 }
-async function writeFeatureFile(featureId) {
-  const f = DB.features[featureId]; if (!f) return;
-  try {
-    if (!f.fileId) {
-      f.fileId = await driveCreateJson(`${featureId}.json`, gFolderId, { meta: f.meta, cases: f.cases });
-    } else {
-      await driveWriteJson(f.fileId, { meta: f.meta, cases: f.cases });
-    }
-    hideSavingIndicator();
-  } catch {}
-}
+
 function scheduleStatusWrite() {
   showSavingIndicator();
-  clearTimeout(gWriteQueue['__status__']);
-  gWriteQueue['__status__'] = setTimeout(writeStatusFile, 800);
-}
-async function writeStatusFile() {
-  try {
-    await driveWriteJson(gStatusFileId, { status: DB.status, deletedCases: DB.deletedCases });
-    hideSavingIndicator();
-  } catch {}
+  clearTimeout(gWriteQueue.__status__);
+  gWriteQueue.__status__ = setTimeout(() => {
+    writeStatusFile().catch(handleDriveMutationError);
+  }, 800);
 }
 
-// ══════════════════════════════════════════
-//  DB HELPERS
-// ══════════════════════════════════════════
-function getStatus(id)       { return DB.status[id] || 'no-run'; }
-function getDeletedSet()     { return new Set(DB.deletedCases); }
-
-async function setStatus(id, st) {
+async function setStatus(id, st, executionMeta = null) {
   DB.status[id] = st;
+  if (!DB.executions) DB.executions = {};
+  if (executionMeta) {
+    DB.executions[id] = executionMeta;
+  }
   scheduleStatusWrite();
 }
 
-// feature CRUD
 async function saveNewFeature(meta) {
   DB.features[meta.id] = { meta, cases: [], fileId: null };
   await writeFeatureFile(meta.id);
 }
+
 async function deleteFeatureData(featureId) {
   const f = DB.features[featureId];
-  if (f?.fileId) await driveDeleteFile(f.fileId);
+  await driveProxyRequest('feature-delete', {
+    method: 'DELETE',
+    query: { featureId, fileId: f?.fileId || '' },
+  });
   delete DB.features[featureId];
 }
 
-// case CRUD
 async function saveCase(featureId, c) {
-  const f = DB.features[featureId]; if (!f) return;
+  const f = DB.features[featureId];
+  if (!f) return;
   const idx = f.cases.findIndex(x => x.id === c.id);
-  if (idx >= 0) f.cases[idx] = c; else f.cases.push(c);
+  if (idx >= 0) f.cases[idx] = c;
+  else f.cases.push(c);
   scheduleFeatureWrite(featureId);
 }
+
 async function deleteCaseData(featureId, caseId) {
   const f = DB.features[featureId];
   if (f) f.cases = f.cases.filter(c => c.id !== caseId);
   if (!DB.deletedCases.includes(caseId)) DB.deletedCases.push(caseId);
+  if (DB.executions?.[caseId]) delete DB.executions[caseId];
   scheduleFeatureWrite(featureId);
   scheduleStatusWrite();
 }
+
 async function resetAllStatusDB() {
   DB.status = {};
+  DB.executions = {};
   scheduleStatusWrite();
 }
 
-// ══════════════════════════════════════════
-//  LOADING / ERROR / SAVING UI
-// ══════════════════════════════════════════
+async function driveUploadImages(files, caseId) {
+  const form = new FormData();
+  form.append('caseId', caseId);
+  files.forEach(file => form.append('files', file));
+  const result = await driveProxyRequest('image-upload', {
+    method: 'POST',
+    formData: form,
+  });
+  return result.images || [];
+}
+
+async function driveDeleteFile(fileId) {
+  await driveProxyRequest('file-delete', {
+    method: 'DELETE',
+    query: { fileId },
+  });
+}
+
 function showLoadingOverlay(msg = 'Loading...') {
   let el = document.getElementById('db-loading');
   if (!el) {
-    el = document.createElement('div'); el.id = 'db-loading';
+    el = document.createElement('div');
+    el.id = 'db-loading';
     el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px;font-family:inherit;';
     document.body.appendChild(el);
   }
   el.innerHTML = `<div style="width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#4A3AB0;border-radius:50%;animation:spin .7s linear infinite;"></div>
-    <div style="font-size:14px;color:#555;">${msg}</div>
+    <div style="font-size:14px;color:#555;">${escapeHtml(msg)}</div>
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>`;
   el.style.display = 'flex';
 }
+
 function hideLoadingOverlay() {
-  const el = document.getElementById('db-loading'); if (el) el.style.display = 'none';
+  const el = document.getElementById('db-loading');
+  if (el) el.style.display = 'none';
 }
+
 function showDBError(err) {
-  let el = document.getElementById('db-loading');
-  if (!el) { el = document.createElement('div'); el.id = 'db-loading'; document.body.appendChild(el); }
-  el.style.cssText = 'position:fixed;inset:0;background:rgba(255,255,255,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;';
-  el.innerHTML = `<div style="font-size:32px;">⚠️</div>
-    <div style="font-size:16px;font-weight:600;color:#c00;">เชื่อมต่อ Google Drive ไม่ได้</div>
-    <div style="font-size:13px;color:#555;max-width:400px;text-align:center;line-height:1.6;">
-      ตรวจสอบว่า folder <b>qa-testcases</b> ถูก share ให้ service account<br>
-      <b>qa-test-cases@nuchy-testcase.iam.gserviceaccount.com</b> แล้ว (เป็น Editor)<br><br>
-      <em style="color:#999;">${err.message}</em>
-    </div>
-    <button onclick="location.reload()" style="padding:8px 20px;background:#4A3AB0;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;">ลองใหม่</button>`;
-  el.style.display = 'flex';
+  void useBundledFallback(err);
 }
-function showSavingIndicator() { const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'flex'; }
-function hideSavingIndicator() { const el = document.getElementById('saving-indicator'); if (el) el.style.display = 'none'; }
+
+function showSavingIndicator() {
+  const el = document.getElementById('saving-indicator');
+  if (el) el.style.display = 'flex';
+}
+
+function hideSavingIndicator() {
+  const el = document.getElementById('saving-indicator');
+  if (el) el.style.display = 'none';
+}
 
 // ══════════════════════════════════════════
 //  APP CORE
@@ -478,10 +742,17 @@ const THEME_COLORS = {
   teal:  {color:'#0F6B6B',colorBg:'#E6F5F5',colorBorder:'#8DD4D4',badge:'badge-teal'},
   amber: {color:'#8A5200',colorBg:'#FFF8E6',colorBorder:'#F5D68A',badge:'badge-gray'},
 };
+const SCREEN_THEME_COLORS = {
+  purple:{bg:'#F0EFFE',color:'#4A3AB0',border:'#C5BCEF'},
+  blue:  {bg:'#EAF2FB',color:'#185FA5',border:'#B5D0F0'},
+  orange:{bg:'#FFF4EC',color:'#D95F02',border:'#F5C49A'},
+  green: {bg:'#EBF5E8',color:'#276B1F',border:'#A8D49D'},
+  amber: {bg:'#FFF8E6',color:'#8A5200',border:'#F5D68A'},
+  teal:  {bg:'#E6F5F5',color:'#0F6B6B',border:'#8DD4D4'},
+};
 const SCREEN_PALETTE=[
-  {bg:'#F0EFFE',color:'#4A3AB0',border:'#C5BCEF'},{bg:'#EAF2FB',color:'#185FA5',border:'#B5D0F0'},
-  {bg:'#FFF4EC',color:'#D95F02',border:'#F5C49A'},{bg:'#EBF5E8',color:'#276B1F',border:'#A8D49D'},
-  {bg:'#FFF8E6',color:'#8A5200',border:'#F5D68A'},{bg:'#E6F5F5',color:'#0F6B6B',border:'#8DD4D4'},
+  SCREEN_THEME_COLORS.purple, SCREEN_THEME_COLORS.blue, SCREEN_THEME_COLORS.orange,
+  SCREEN_THEME_COLORS.green, SCREEN_THEME_COLORS.amber, SCREEN_THEME_COLORS.teal,
 ];
 function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
 
@@ -514,16 +785,161 @@ function statusSelectHtml(caseId,featureId){
   const opts=STATUSES.map(s=>`<option value="${s.key}"${s.key===cur?' selected':''}>${s.icon} ${s.label}</option>`).join('');
   return`<select class="status-select ${def.cssClass}" onclick="event.stopPropagation()" onchange="onStatusChange('${caseId}','${featureId}',this)">${opts}</select>`;
 }
+
+function applyStatusSelectClass(sel, statusKey) {
+  STATUSES.forEach(s => sel.classList.remove(s.cssClass));
+  sel.classList.add((STATUSES.find(s=>s.key===statusKey)||STATUSES[0]).cssClass);
+}
+
+function getStatusLabel(statusKey) {
+  return (STATUSES.find(s => s.key === statusKey)?.label) || statusKey || '-';
+}
+
+function formatExecTimestamp(value) {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  return new Intl.DateTimeFormat('th-TH', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d);
+}
+
+function openExecutionNoteModal(featureId, caseId, nextStatus = '', options = {}) {
+  const mergedOptions = { reRender: true, ...options };
+  const targetStatus = nextStatus || getStatus(caseId) || 'no-run';
+  const existing = getExecutionMeta(caseId) || {};
+  const executorOptions = getExecutorNameList();
+  const executorOptionHtml = executorOptions
+    .map(name => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join('');
+
+  return new Promise(resolve => {
+    openModal('execution-note-modal', `
+      <div class="modal-header">
+        <span class="modal-title">📝 Execute / Remark</span>
+        <span class="modal-sub">${escapeHtml(caseId)}</span>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:12px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);padding:10px 12px;border-radius:8px;line-height:1.7;">
+          <div><strong>Status:</strong> ${escapeHtml(getStatusLabel(targetStatus))}</div>
+          <div><strong>Last update:</strong> ${escapeHtml(formatExecTimestamp(existing.updatedAt))}</div>
+        </div>
+        <div class="form-group" style="margin-top:10px;">
+          <label>Execute by <span class="form-hint" style="color:var(--red);">* required</span></label>
+          <select class="form-select" id="exec-name-preset" style="margin-bottom:8px;">
+            <option value="">เลือกรายชื่อที่เคยใช้...</option>
+            ${executorOptionHtml}
+          </select>
+          <input class="form-input" id="exec-name" list="exec-name-list" value="${escapeHtml(existing.executor || '')}" placeholder="ชื่อคน execute" />
+          <datalist id="exec-name-list">
+            ${executorOptionHtml}
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label>Remark</label>
+          <textarea class="form-textarea" id="exec-remark" rows="4" placeholder="หมายเหตุการทดสอบ (ถ้ามี)">${escapeHtml(existing.remark || '')}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-modal-cancel" id="exec-cancel-btn">ยกเลิก</button>
+        <button class="btn-modal-ok" id="exec-save-btn">บันทึก</button>
+      </div>`);
+
+    const cancelBtn = document.getElementById('exec-cancel-btn');
+    const saveBtn = document.getElementById('exec-save-btn');
+    const presetSelect = document.getElementById('exec-name-preset');
+    const nameInput = document.getElementById('exec-name');
+    const remarkInput = document.getElementById('exec-remark');
+
+    const closeAndResolve = (ok) => {
+      closeModal();
+      resolve(ok);
+    };
+
+    cancelBtn.onclick = () => closeAndResolve(false);
+    if (existing.executor && presetSelect) {
+      const hasOption = executorOptions.includes(existing.executor);
+      if (hasOption) presetSelect.value = existing.executor;
+    }
+    if (presetSelect) {
+      presetSelect.onchange = () => {
+        if (!presetSelect.value) return;
+        nameInput.value = presetSelect.value;
+        nameInput.focus();
+      };
+    }
+
+    saveBtn.onclick = async () => {
+      const executor = nameInput.value.trim();
+      const remark = remarkInput.value.trim();
+      if (!executor) {
+        showFormError('กรุณากรอกชื่อคน execute');
+        return;
+      }
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'กำลังบันทึก...';
+      try {
+        rememberExecutorName(executor);
+        await setStatus(caseId, targetStatus, {
+          executor,
+          remark,
+          status: targetStatus,
+          updatedAt: new Date().toISOString(),
+        });
+        if (mergedOptions.reRender) {
+          FEATURES = buildFeatures();
+          updateHeaderStrip();
+          if (currentFeatureId === 'overview') {
+            refreshFeatureRowStats(featureId);
+          } else {
+            const feat = FEATURES.find(f => f.meta.id === featureId);
+            if (feat) renderFeature(feat);
+          }
+        }
+        closeAndResolve(true);
+      } catch (error) {
+        showFormError(`บันทึกไม่สำเร็จ: ${error.message}`);
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'บันทึก';
+      }
+    };
+  });
+}
+
 async function onStatusChange(caseId,featureId,sel){
-  STATUSES.forEach(s=>sel.classList.remove(s.cssClass));
-  sel.classList.add(STATUSES.find(s=>s.key===sel.value).cssClass);
-  await setStatus(caseId,sel.value);
+  const prevStatus = getStatus(caseId);
+  const nextStatus = sel.value;
+  if (!ensureWritable()) {
+    sel.value = prevStatus;
+    applyStatusSelectClass(sel, prevStatus);
+    return;
+  }
+  if (nextStatus === prevStatus) {
+    applyStatusSelectClass(sel, prevStatus);
+    return;
+  }
+
+  const saved = await openExecutionNoteModal(featureId, caseId, nextStatus, { reRender: false });
+  if (!saved) {
+    sel.value = prevStatus;
+    applyStatusSelectClass(sel, prevStatus);
+    return;
+  }
+
+  applyStatusSelectClass(sel, nextStatus);
   updateHeaderStrip();
   if(currentFeatureId==='overview')refreshFeatureRowStats(featureId);
   else refreshStatusStatsBar(featureId);
 }
 
 function init(){
+  initTheme();
+  activeSortMode = getInitialSortMode();
   FEATURES=buildFeatures();
   injectScreenStyles();buildNavTabs();renderOverview();updateHeaderStrip();
 }
@@ -533,7 +949,11 @@ function injectScreenStyles(){
   if(!s){s=document.createElement('style');s.id='dyn-styles';document.head.appendChild(s);}
   s.textContent='';
   FEATURES.forEach(f=>Object.entries(f.meta.screens).forEach(([,sc],i)=>{
-    const p=getScreenStyle(i);
+    const p = (sc?.bg && sc?.color && sc?.border)
+      ? { bg: sc.bg, color: sc.color, border: sc.border }
+      : (sc?.tone && SCREEN_THEME_COLORS[sc.tone]
+        ? SCREEN_THEME_COLORS[sc.tone]
+        : getScreenStyle(i));
     s.textContent+=`.${sc.cssClass}{background:${p.bg};color:${p.color};border:1px solid ${p.border};}`;
   }));
 }
@@ -587,6 +1007,9 @@ function renderOverview(){
         <div class="ov-progress-bar" id="ov-global-progress">${buildProgressBar(counts,total,'ov-pb-seg')}</div>
       </div>
     </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn-import-csv" onclick="openBulkImportModal()">📦 Bulk CSV</button>
+    </div>
     <div class="section-sep"><span>Features</span><span class="count-pill">${FEATURES.length} features · ${total} cases</span></div>
     <div class="ov-list" id="ov-list">
       ${FEATURES.length===0
@@ -597,7 +1020,7 @@ function renderOverview(){
 
 function buildFeatureRow(f){
   const counts=getStatusCounts(f.cases),total=f.cases.length;
-  const tags=f.meta.tags.map(t=>`<span class="badge ${t.style}">${t.label}</span>`).join('');
+  const tags=(f.meta.tags||[]).map(renderFeatureTag).join('');
   const mini=STATUSES.filter(s=>counts[s.key]>0).map(s=>
     `<span class="ov-mini-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} ${counts[s.key]}</span>`
   ).join('')||`<span style="font-size:11px;color:var(--text3);">No Run</span>`;
@@ -630,7 +1053,7 @@ function refreshFeatureRowStats(fid){
 // ── FEATURE VIEW ───────────────────────────
 function renderFeature(feature){
   const{meta,cases}=feature;
-  const tags=meta.tags.map(t=>`<span class="badge ${t.style}">${t.label}</span>`).join('');
+  const tags=(meta.tags||[]).map(renderFeatureTag).join('');
   const screenBtns=Object.entries(meta.screens).map(([k,sc],i)=>{
     const cls=['active-purple','active-blue','active-orange','active-green','active-amber','active-teal'][i%6];
     return`<button class="filter-btn" onclick="setScreenFilter('${k}',this,'${cls}')">${sc.label} – ${sc.name}</button>`;
@@ -657,6 +1080,17 @@ function renderFeature(feature){
     <div class="search-wrap">
       <svg class="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M10 10l3 3"/></svg>
       <input type="text" id="search-input" placeholder="ค้นหา test case..." oninput="applyFilters()" />
+    </div>
+    <div class="list-toolbar">
+      <div class="list-toolbar-item">
+        <span class="filter-label" style="margin:0;">Sort</span>
+        <select id="sort-select" class="form-select sort-select" onchange="setSortMode(this.value)">
+          <option value="id-asc"${activeSortMode==='id-asc'?' selected':''}>ID A-Z</option>
+          <option value="id-desc"${activeSortMode==='id-desc'?' selected':''}>ID Z-A</option>
+          <option value="title-asc"${activeSortMode==='title-asc'?' selected':''}>Test Case A-Z</option>
+          <option value="title-desc"${activeSortMode==='title-desc'?' selected':''}>Test Case Z-A</option>
+        </select>
+      </div>
     </div>
     <div class="filter-section"><div class="filter-label">Type</div><div class="filter-group" id="type-filters">
       <button class="filter-btn active" onclick="setTypeFilter('all',this,'active')">All types</button>
@@ -698,6 +1132,31 @@ function setTypeFilter(v,b,c){clearGroup('type-filters');b.classList.add(c);acti
 function setScreenFilter(v,b,c){clearGroup('screen-filters');b.classList.add(c);activeScreen=v;applyFilters();}
 function setStatusFilter(v,b,c){clearGroup('status-filters');b.classList.add(c);activeStatusFilt=v;applyFilters();}
 
+function setSortMode(mode) {
+  if (!SORT_MODES.includes(mode)) return;
+  activeSortMode = mode;
+  localStorage.setItem('qa_sort_mode', mode);
+  applyFilters();
+}
+
+function normalizeCompareText(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sortCasesForView(cases) {
+  const sorted = [...cases];
+  if (activeSortMode === 'id-asc') {
+    sorted.sort((a, b) => String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  } else if (activeSortMode === 'id-desc') {
+    sorted.sort((a, b) => String(b.id || '').localeCompare(String(a.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
+  } else if (activeSortMode === 'title-asc') {
+    sorted.sort((a, b) => normalizeCompareText(a.title).localeCompare(normalizeCompareText(b.title), undefined, { numeric: true, sensitivity: 'base' }));
+  } else if (activeSortMode === 'title-desc') {
+    sorted.sort((a, b) => normalizeCompareText(b.title).localeCompare(normalizeCompareText(a.title), undefined, { numeric: true, sensitivity: 'base' }));
+  }
+  return sorted;
+}
+
 function applyFilters(){
   const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(!f)return;
   const q=(document.getElementById('search-input')?.value||'').toLowerCase();
@@ -708,7 +1167,7 @@ function applyFilters(){
     const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&s.toLowerCase().includes(q));
     return typeOk&&screenOk&&stOk&&srchOk;
   });
-  renderTable(filtered,f);
+  renderTable(sortCasesForView(filtered),f);
 }
 
 function renderTable(list,feature){
@@ -719,8 +1178,14 @@ function renderTable(list,feature){
   if(!list.length){tbody.innerHTML='';return;}
   tbody.innerHTML=list.map(c=>{
     const sc=feature.meta.screens[c.screen];
-    const typePill=`<span class="type-pill tp-${c.type}">${{positive:'✓ Positive',edge:'~ Edge',negative:'✗ Negative'}[c.type]||c.type}</span>`;
-    const screenTag=sc?`<span class="screen-tag ${sc.cssClass}">${sc.label}<br><small style="font-weight:400;opacity:.75;">${sc.name}</small></span>`:`<span class="screen-tag">${c.screen||''}</span>`;
+    const typePill=`<span class="type-pill tp-${c.type}"><span class="type-pill-label">${{positive:'✓ Positive',edge:'~ Edge',negative:'✗ Negative'}[c.type]||c.type}</span></span>`;
+    const screenTag=sc
+      ? `<span class="screen-tag ${sc.cssClass}"><span class="screen-tag-label">${sc.label}</span><span class="screen-tag-name">${sc.name}</span></span>`
+      : `<span class="screen-tag"><span class="screen-tag-label">${c.screen||''}</span></span>`;
+    const execMeta = getExecutionMeta(c.id) || {};
+    const execBy = execMeta.executor || '-';
+    const execRemark = execMeta.remark || '-';
+    const execTime = formatExecTimestamp(execMeta.updatedAt);
     const imgCount=c.images?.length||0;
     const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
@@ -730,7 +1195,13 @@ function renderTable(list,feature){
       <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>
       <td class="col-type hide-sm">${typePill}</td>
       <td class="col-status">${statusSelectHtml(c.id,feature.meta.id)}</td>
-      <td class="col-actions"><button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteCase('${c.id}','${feature.meta.id}')" title="ลบ">🗑</button></td>
+      <td class="col-actions">
+        <div class="case-actions">
+          <button class="icon-btn icon-btn-compact" onclick="event.stopPropagation();openExecutionNoteModal('${feature.meta.id}','${c.id}')" title="Remark / Execute">📝</button>
+          <button class="icon-btn icon-btn-compact" onclick="event.stopPropagation();openEditCaseModal('${feature.meta.id}','${c.id}')" title="แก้ไข">✏️</button>
+          <button class="icon-btn icon-btn-danger icon-btn-compact" onclick="event.stopPropagation();confirmDeleteCase('${c.id}','${feature.meta.id}')" title="ลบ">🗑</button>
+        </div>
+      </td>
     </tr>
     <tr class="detail-row" id="detail-${c.id}">
       <td colspan="6" style="padding:0 0 8px 0;">
@@ -741,11 +1212,19 @@ function renderTable(list,feature){
           <div><div class="detail-section-title">Expected behavior</div>
             <ul class="detail-list expect-list">${(c.expect||[]).map(e=>`<li>${e}</li>`).join('')}</ul>
           </div>
+          <div>
+            <div class="detail-section-title">Execution Note</div>
+            <ul class="detail-list expect-list">
+              <li><strong>Execute by:</strong> ${escapeHtml(execBy)}</li>
+              <li><strong>Remark:</strong> ${escapeHtml(execRemark)}</li>
+              <li><strong>Updated:</strong> ${escapeHtml(execTime)}</li>
+            </ul>
+          </div>
           ${imgCount>0?`<div style="grid-column:1/-1;">
             <div class="detail-section-title">รูปภาพ (${imgCount})</div>
             <div class="img-thumb-row">${c.images.map((img,i)=>`
               <div class="img-thumb" onclick="openImageViewer('${c.id}','${feature.meta.id}',${i})">
-                <img src="${img.url}" alt="${img.name}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 80 60%22><rect width=%2280%22 height=%2260%22 fill=%22%23f0f0f0%22/><text x=%2240%22 y=%2235%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2212%22>img</text></svg>'" />
+                <img src="${getImageDisplayUrl(img)}" data-file-id="${escapeHtml(getImageFileId(img))}" alt="${img.name}" onerror="handleImageElementError(this)" />
                 <span class="img-thumb-del" onclick="event.stopPropagation();confirmDeleteImage('${c.id}','${feature.meta.id}',${i})" title="ลบรูป">✕</span>
               </div>`).join('')}
               <label class="img-thumb img-thumb-add" title="เพิ่มรูป">
@@ -778,10 +1257,86 @@ function updateTypeStats(cases){
   document.getElementById('s-neg').textContent=cases.filter(c=>c.type==='negative').length;
 }
 
+function getDriveViewImageUrl(fileId) {
+  if (!fileId) return '';
+  return `https://drive.google.com/uc?export=view&id=${encodeURIComponent(fileId)}`;
+}
+
+function getGoogleusercontentImageUrl(fileId) {
+  if (!fileId) return '';
+  return `https://lh3.googleusercontent.com/d/${encodeURIComponent(fileId)}`;
+}
+
+function getDriveThumbnailUrl(fileId) {
+  if (!fileId) return '';
+  return `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w1600`;
+}
+
+function extractDriveFileIdFromUrl(value) {
+  const url = String(value || '');
+  const fromPath = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (fromPath?.[1]) return fromPath[1];
+  const fromQuery = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (fromQuery?.[1]) return fromQuery[1];
+  return '';
+}
+
+function getImageFileId(image) {
+  if (!image) return '';
+  return image.id
+    || extractDriveFileIdFromUrl(image.url)
+    || extractDriveFileIdFromUrl(image.viewUrl)
+    || '';
+}
+
+function getImageDisplayUrl(image) {
+  if (!image) return '';
+  if (image.url) return image.url;
+  return getDriveViewImageUrl(getImageFileId(image));
+}
+
+function setImageLoadPlaceholder(el) {
+  if (!el) return;
+  el.onerror = null;
+  el.src = "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 400 300%22><rect width=%22400%22 height=%22300%22 fill=%22%23f5f5f5%22/><text x=%22200%22 y=%22155%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2216%22>ไม่สามารถโหลดรูปได้</text></svg>";
+}
+
+function handleImageElementError(el) {
+  if (!el) return;
+  const fileId = (el.dataset.fileId || '').trim();
+  if (!fileId) {
+    setImageLoadPlaceholder(el);
+    return;
+  }
+
+  const currentSrc = String(el.getAttribute('src') || '');
+  const hasDriveView = currentSrc.includes('drive.google.com/uc?export=view');
+  const hasGoogleusercontent = currentSrc.includes('lh3.googleusercontent.com/d/');
+  const hasThumb = currentSrc.includes('drive.google.com/thumbnail');
+
+  if (!hasDriveView) {
+    el.src = getDriveViewImageUrl(fileId);
+    return;
+  }
+  if (!hasGoogleusercontent) {
+    el.src = getGoogleusercontentImageUrl(fileId);
+    return;
+  }
+  if (!hasThumb) {
+    el.src = getDriveThumbnailUrl(fileId);
+    return;
+  }
+  setImageLoadPlaceholder(el);
+}
+
 // ══════════════════════════════════════════
 //  IMAGE UPLOAD & VIEWER
 // ══════════════════════════════════════════
 async function uploadImages(event, caseId, featureId) {
+  if (!ensureWritable()) {
+    event.target.value = '';
+    return;
+  }
   const files = Array.from(event.target.files);
   if (!files.length) return;
   showLoadingOverlay(`กำลังอัปโหลด ${files.length} รูป...`);
@@ -789,10 +1344,8 @@ async function uploadImages(event, caseId, featureId) {
     const f = DB.features[featureId]; if (!f) return;
     const c = f.cases.find(x => x.id === caseId); if (!c) return;
     if (!c.images) c.images = [];
-    for (const file of files) {
-      const img = await driveUploadImage(file, caseId);
-      c.images.push(img);
-    }
+    const uploaded = await driveUploadImages(files, caseId);
+    c.images.push(...uploaded);
     await saveCase(featureId, c);
     hideLoadingOverlay();
     FEATURES = buildFeatures();
@@ -807,6 +1360,7 @@ async function uploadImages(event, caseId, featureId) {
 }
 
 function confirmDeleteImage(caseId, featureId, imgIndex) {
+  if (!ensureWritable()) return;
   openConfirmModal('ลบรูปภาพ', 'ต้องการลบรูปนี้ออกใช่ไหม?', async () => {
     const f = DB.features[featureId]; if (!f) return;
     const c = f.cases.find(x => x.id === caseId); if (!c || !c.images) return;
@@ -842,14 +1396,14 @@ function openImageViewer(caseId, featureId, startIndex = 0) {
           <span style="font-size:13px;font-weight:600;">${imgs[cur].name}</span>
           <div style="display:flex;gap:8px;align-items:center;">
             <span style="font-size:12px;color:var(--text3);">${cur+1} / ${imgs.length}</span>
-            <a href="${imgs[cur].viewUrl||imgs[cur].url}" target="_blank" style="font-size:12px;color:var(--blue);">เปิดใน Drive ↗</a>
+            <a href="${imgs[cur].viewUrl||imgs[cur].url}" target="_blank" style="font-size:12px;color:var(--blue);">ดูภาพขนาดเต็ม</a>
             <button onclick="closeImageViewer()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text2);">✕</button>
           </div>
         </div>
         <div class="img-viewer-body">
           <button class="img-viewer-nav img-viewer-prev" onclick="imgViewerNav(-1)" ${cur===0?'disabled':''}>‹</button>
-          <img src="${imgs[cur].url}" alt="${imgs[cur].name}" class="img-viewer-img"
-            onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 400 300%22><rect width=%22400%22 height=%22300%22 fill=%22%23f5f5f5%22/><text x=%22200%22 y=%22155%22 text-anchor=%22middle%22 fill=%22%23999%22 font-size=%2216%22>ไม่สามารถโหลดรูปได้</text></svg>'" />
+          <img src="${getImageDisplayUrl(imgs[cur])}" data-file-id="${escapeHtml(getImageFileId(imgs[cur]))}" alt="${imgs[cur].name}" class="img-viewer-img"
+            onerror="handleImageElementError(this)" />
           <button class="img-viewer-nav img-viewer-next" onclick="imgViewerNav(1)" ${cur===imgs.length-1?'disabled':''}>›</button>
         </div>
         <div class="img-viewer-dots">
@@ -901,6 +1455,7 @@ function exportCsv(featureId) {
 }
 
 function openImportCsvModal(featureId) {
+  if (!ensureWritable()) return;
   const f = DB.features[featureId]; if (!f) return;
   openModal('import-csv-modal', `
     <div class="modal-header"><span class="modal-title">📥 Import CSV</span><span class="modal-sub">${f.meta.emoji} ${f.meta.name}</span></div>
@@ -936,28 +1491,33 @@ function openImportCsvModal(featureId) {
 }
 
 let _csvParsed = [];
+let _bulkCsvParsed = [];
+function parseCasesFromCsvText(text) {
+  const rows = parseCsvText(text);
+  if (rows.length < 2) throw new Error('ไฟล์ CSV ว่าง หรือไม่มีข้อมูล');
+  const headers = rows[0].map(h => h.trim().toLowerCase());
+  const required = ['id','type','title'];
+  const missing = required.filter(h => !headers.includes(h));
+  if (missing.length) throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);
+
+  return rows.slice(1).filter(r => r.some(v => v.trim())).map(row => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = (row[i] || '').trim());
+    return {
+      id: obj.id, type: obj.type||'positive', screen: obj.screen||'S1',
+      title: obj.title, sub: obj.sub||'',
+      steps: obj.steps ? obj.steps.split('|').map(s=>s.trim()).filter(Boolean) : [],
+      expect: obj.expect ? obj.expect.split('|').map(s=>s.trim()).filter(Boolean) : [],
+      images: [],
+    };
+  }).filter(c => c.id && c.title);
+}
+
 function parseCsvPreview(text, featureId) {
   const errEl = document.getElementById('csv-error');
   errEl.style.display = 'none';
   try {
-    const rows = parseCsvText(text);
-    if (rows.length < 2) throw new Error('ไฟล์ CSV ว่าง หรือไม่มีข้อมูล');
-    const headers = rows[0].map(h => h.trim().toLowerCase());
-    const required = ['id','type','title'];
-    const missing = required.filter(h => !headers.includes(h));
-    if (missing.length) throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);
-
-    _csvParsed = rows.slice(1).filter(r => r.some(v => v.trim())).map(row => {
-      const obj = {};
-      headers.forEach((h, i) => obj[h] = (row[i] || '').trim());
-      return {
-        id: obj.id, type: obj.type||'positive', screen: obj.screen||'S1',
-        title: obj.title, sub: obj.sub||'',
-        steps: obj.steps ? obj.steps.split('|').map(s=>s.trim()).filter(Boolean) : [],
-        expect: obj.expect ? obj.expect.split('|').map(s=>s.trim()).filter(Boolean) : [],
-        images: [],
-      };
-    }).filter(c => c.id && c.title);
+    _csvParsed = parseCasesFromCsvText(text);
 
     const preview = document.getElementById('csv-preview');
     const content = document.getElementById('csv-preview-content');
@@ -999,23 +1559,59 @@ function parseCsvText(text) {
   return rows;
 }
 
+function inferFeatureIdFromFilename(name) {
+  return name
+    .replace(/\.[^.]+$/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+}
+
+function mergeImportedCases(featureId, cases, mode = 'merge') {
+  const f = DB.features[featureId];
+  if (!f) throw new Error(`ไม่พบ feature: ${featureId}`);
+
+  const existingMap = new Map(f.cases.map(c => [c.id, c]));
+  let added = 0;
+  let updated = 0;
+
+  if (mode === 'replace') {
+    f.cases = cases.map(c => {
+      const existing = existingMap.get(c.id);
+      if (existing) updated++;
+      else added++;
+      return { ...c, images: existing?.images || [] };
+    });
+    return { added, updated };
+  }
+
+  const nextCases = [...f.cases];
+  cases.forEach(c => {
+    const existing = existingMap.get(c.id);
+    if (existing) {
+      Object.assign(existing, c, { images: existing.images || [] });
+      updated++;
+      return;
+    }
+    nextCases.push({ ...c, images: c.images || [] });
+    added++;
+  });
+  f.cases = nextCases;
+  return { added, updated };
+}
+
 async function submitImportCsv(featureId) {
   if (!_csvParsed.length) return;
   const btn = document.getElementById('btn-do-import');
   btn.disabled = true; btn.textContent = 'กำลัง import...';
   try {
-    const f = DB.features[featureId]; if (!f) return;
-    let added = 0, skipped = 0;
-    for (const c of _csvParsed) {
-      if (f.cases.find(x => x.id === c.id)) { skipped++; continue; }
-      f.cases.push(c); added++;
-    }
+    const { added, updated } = mergeImportedCases(featureId, _csvParsed, 'merge');
     await writeFeatureFile(featureId);
     closeModal();
     FEATURES = buildFeatures(); rebuildNav(); updateHeaderStrip();
     const feat = FEATURES.find(f => f.meta.id === featureId);
     if (feat) renderFeature(feat);
-    setTimeout(() => alert(`Import สำเร็จ: เพิ่ม ${added} cases${skipped?`, ข้าม ${skipped} (ID ซ้ำ)`:''}`)  ,100);
+    setTimeout(() => alert(`Import สำเร็จ: เพิ่ม ${added} cases${updated ? `, อัปเดต ${updated}` : ''}`),100);
   } catch (err) {
     const errEl = document.getElementById('csv-error');
     if (errEl) { errEl.textContent = 'Import ไม่สำเร็จ: ' + err.message; errEl.style.display = 'block'; }
@@ -1023,10 +1619,130 @@ async function submitImportCsv(featureId) {
   }
 }
 
+function openBulkImportModal() {
+  if (!ensureWritable()) return;
+  openModal('bulk-import-modal', `
+    <div class="modal-header"><span class="modal-title">📦 Bulk CSV Import</span><span class="modal-sub">หลายไฟล์พร้อมกัน แยกตาม feature</span></div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--text2);background:var(--surface2);padding:12px;border-radius:8px;line-height:1.8;">
+        ไฟล์แต่ละอันต้องตั้งชื่อให้ตรงกับ <code>featureId</code> เช่น <code>auth.csv</code> หรือ <code>xray-planogram.csv</code><br>
+        รองรับไฟล์ CSV แบบ UTF-8 / UTF-8 with BOM
+      </div>
+      <div class="form-group">
+        <label>โหมดการ import</label>
+        <select class="form-select" id="bulk-import-mode">
+          <option value="merge">Merge: เพิ่มใหม่และอัปเดต ID ที่ซ้ำ</option>
+          <option value="replace">Replace: แทนที่ทั้ง feature ด้วยข้อมูลในไฟล์</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>เลือกหลายไฟล์ CSV</label>
+        <input type="file" id="bulk-csv-file-input" multiple accept=".csv,text/csv" class="form-input" style="padding:6px;" />
+      </div>
+      <div id="bulk-csv-preview" style="display:none;">
+        <div class="detail-section-title" style="margin-bottom:6px;">Preview</div>
+        <div id="bulk-csv-preview-content" style="font-size:12px;max-height:240px;overflow-y:auto;background:var(--surface2);padding:10px;border-radius:8px;border:1px solid var(--border);"></div>
+      </div>
+      <div id="bulk-csv-error" class="form-error" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn-modal-ok" id="btn-do-bulk-import" onclick="submitBulkImport()" disabled>Import ทั้งหมด</button>
+    </div>`);
+
+  document.getElementById('bulk-csv-file-input').addEventListener('change', async e => {
+    const files = Array.from(e.target.files || []);
+    await parseBulkCsvFiles(files);
+  });
+}
+
+async function parseBulkCsvFiles(files) {
+  const errEl = document.getElementById('bulk-csv-error');
+  const preview = document.getElementById('bulk-csv-preview');
+  const content = document.getElementById('bulk-csv-preview-content');
+  const btn = document.getElementById('btn-do-bulk-import');
+  errEl.style.display = 'none';
+  _bulkCsvParsed = [];
+
+  if (!files.length) {
+    btn.disabled = true;
+    preview.style.display = 'none';
+    return;
+  }
+
+  for (const file of files) {
+    const featureId = inferFeatureIdFromFilename(file.name);
+    try {
+      if (!DB.features[featureId]) throw new Error(`ไม่พบ featureId "${featureId}" จากชื่อไฟล์`);
+      const text = await file.text();
+      const cases = parseCasesFromCsvText(text);
+      _bulkCsvParsed.push({ fileName: file.name, featureId, cases, error: '' });
+    } catch (err) {
+      _bulkCsvParsed.push({ fileName: file.name, featureId, cases: [], error: err.message });
+    }
+  }
+
+  preview.style.display = 'block';
+  content.innerHTML = _bulkCsvParsed.map(item => `
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);">
+      <div><strong>${item.fileName}</strong> → <code>${item.featureId}</code></div>
+      <div style="color:${item.error ? 'var(--red)' : 'var(--text2)'};margin-top:2px;">
+        ${item.error || `พร้อม import ${item.cases.length} cases`}
+      </div>
+    </div>`).join('');
+
+  const invalidCount = _bulkCsvParsed.filter(item => item.error).length;
+  if (invalidCount) {
+    errEl.textContent = `มี ${invalidCount} ไฟล์ที่ import ไม่ได้ กรุณาแก้ชื่อไฟล์หรือรูปแบบ CSV`;
+    errEl.style.display = 'block';
+  }
+  btn.disabled = !_bulkCsvParsed.some(item => !item.error);
+}
+
+async function submitBulkImport() {
+  const btn = document.getElementById('btn-do-bulk-import');
+  const mode = document.getElementById('bulk-import-mode').value;
+  const validImports = _bulkCsvParsed.filter(item => !item.error);
+  if (!validImports.length) return;
+
+  btn.disabled = true;
+  btn.textContent = 'กำลัง import...';
+  try {
+    const results = [];
+    for (const item of validImports) {
+      const result = mergeImportedCases(item.featureId, item.cases, mode);
+      await writeFeatureFile(item.featureId);
+      results.push({ featureId: item.featureId, ...result });
+    }
+
+    closeModal();
+    FEATURES = buildFeatures();
+    rebuildNav();
+    updateHeaderStrip();
+    if (currentFeatureId === 'overview') renderOverview();
+    else {
+      const feat = FEATURES.find(f => f.meta.id === currentFeatureId);
+      if (feat) renderFeature(feat);
+    }
+
+    const summary = results.map(item =>
+      `${item.featureId}: +${item.added}${item.updated ? ` / update ${item.updated}` : ''}`
+    ).join('\n');
+    setTimeout(() => alert(`Bulk import สำเร็จ\n${summary}`), 100);
+  } catch (err) {
+    const errEl = document.getElementById('bulk-csv-error');
+    errEl.textContent = 'Bulk import ไม่สำเร็จ: ' + err.message;
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = 'Import ทั้งหมด';
+  }
+}
+
 // ══════════════════════════════════════════
 //  DELETE
 // ══════════════════════════════════════════
 function confirmDeleteCase(caseId,featureId){
+  if (!ensureWritable()) return;
   openConfirmModal('ลบ Test Case',
     `ต้องการลบ <strong>${caseId}</strong> ออกใช่ไหม?`,
     async()=>{
@@ -1040,6 +1756,7 @@ function confirmDeleteCase(caseId,featureId){
   );
 }
 function confirmDeleteFeature(featureId){
+  if (!ensureWritable()) return;
   const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
   openConfirmModal('ลบ Feature',
     `ต้องการลบ <strong>${f.meta.emoji} ${f.meta.name}</strong> ทั้งหมดใช่ไหม?<br><small style="color:var(--red);">ลบทุก test case และไฟล์ใน Drive</small>`,
@@ -1053,9 +1770,10 @@ function confirmDeleteFeature(featureId){
 }
 
 // ══════════════════════════════════════════
-//  ADD CASE MODAL
+//  ADD / EDIT CASE MODAL
 // ══════════════════════════════════════════
 function openAddCaseModal(featureId){
+  if (!ensureWritable()) return;
   const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
   const screenOptions=Object.entries(f.meta.screens).map(([k,sc])=>`<option value="${k}">${sc.label} – ${sc.name}</option>`).join('');
   const nums=f.cases.map(c=>parseInt(c.id.replace(/\D/g,''))||0);
@@ -1083,6 +1801,40 @@ function openAddCaseModal(featureId){
       <button class="btn-modal-ok" onclick="submitAddCase('${featureId}')">บันทึก</button>
     </div>`);
 }
+
+function openEditCaseModal(featureId, caseId){
+  if (!ensureWritable()) return;
+  const f = DB.features[featureId]; if (!f) return;
+  const c = f.cases.find(item => item.id === caseId); if (!c) return;
+  const screenOptions = Object.entries(f.meta.screens)
+    .map(([k, sc]) => `<option value="${k}"${k===c.screen?' selected':''}>${sc.label} – ${sc.name}</option>`)
+    .join('');
+
+  openModal('edit-case-modal',`
+    <div class="modal-header"><span class="modal-title">✏️ Edit Test Case</span><span class="modal-sub">${f.meta.emoji} ${f.meta.name}</span></div>
+    <div class="modal-body">
+      <div class="form-row2">
+        <div class="form-group"><label>Case ID</label><input class="form-input" id="fc-id" value="${escapeHtml(c.id)}" readonly /></div>
+        <div class="form-group"><label>Type</label><select class="form-select" id="fc-type">
+          <option value="positive"${c.type==='positive'?' selected':''}>✓ Positive</option>
+          <option value="edge"${c.type==='edge'?' selected':''}>~ Edge case</option>
+          <option value="negative"${c.type==='negative'?' selected':''}>✗ Negative</option>
+        </select></div>
+      </div>
+      <div class="form-group"><label>Screen</label><select class="form-select" id="fc-screen">${screenOptions}</select></div>
+      <div class="form-group"><label>Title</label><input class="form-input" id="fc-title" value="${escapeHtml(c.title||'')}" placeholder="ชื่อ test case" /></div>
+      <div class="form-group"><label>Sub-title</label><input class="form-input" id="fc-sub" value="${escapeHtml(c.sub||'')}" placeholder="คำอธิบายสั้น" /></div>
+      <div class="form-group"><label>Steps to reproduce <span class="form-hint">บรรทัดละ 1 step</span></label>
+        <textarea class="form-textarea" id="fc-steps" rows="4" placeholder="เปิดแอป&#10;กด Login&#10;ใส่ email และ password">${escapeHtml((c.steps||[]).join('\n'))}</textarea></div>
+      <div class="form-group"><label>Expected behavior <span class="form-hint">บรรทัดละ 1 รายการ</span></label>
+        <textarea class="form-textarea" id="fc-expect" rows="4" placeholder="แสดงหน้า Home&#10;Token บันทึกแล้ว">${escapeHtml((c.expect||[]).join('\n'))}</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn-modal-ok" onclick="submitEditCase('${featureId}','${caseId}')">บันทึก</button>
+    </div>`);
+}
+
 async function submitAddCase(featureId){
   const id=document.getElementById('fc-id').value.trim();
   const type=document.getElementById('fc-type').value;
@@ -1092,7 +1844,7 @@ async function submitAddCase(featureId){
   const steps=document.getElementById('fc-steps').value.split('\n').map(s=>s.trim()).filter(Boolean);
   const expect=document.getElementById('fc-expect').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!id||!title||!steps.length||!expect.length){showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ');return;}
-  const f=FEATURES.find(f=>f.meta.id===featureId);
+  const f = DB.features[featureId];
   if(f&&f.cases.some(c=>c.id===id)){showFormError(`Case ID "${id}" ซ้ำ`);return;}
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
@@ -1106,10 +1858,47 @@ async function submitAddCase(featureId){
   }
 }
 
+async function submitEditCase(featureId, caseId){
+  const id = document.getElementById('fc-id').value.trim();
+  const type = document.getElementById('fc-type').value;
+  const screen = document.getElementById('fc-screen').value;
+  const title = document.getElementById('fc-title').value.trim();
+  const sub = document.getElementById('fc-sub').value.trim();
+  const steps = document.getElementById('fc-steps').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  const expect = document.getElementById('fc-expect').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if(!id||!title||!steps.length||!expect.length){showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ');return;}
+
+  const f = DB.features[featureId];
+  const existing = f?.cases.find(c => c.id === caseId);
+  if(!existing){showFormError('ไม่พบ test case ที่ต้องการแก้ไข');return;}
+
+  const okBtn=document.querySelector('.btn-modal-ok');
+  if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
+  try{
+    await saveCase(featureId,{
+      ...existing,
+      id: existing.id,
+      type,
+      screen,
+      title,
+      sub,
+      steps,
+      expect,
+      images: existing.images || [],
+    });
+    FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
+    const feat=FEATURES.find(item=>item.meta.id===featureId);if(feat)renderFeature(feat);
+  }catch(err){
+    showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
+    if(okBtn){okBtn.disabled=false;okBtn.textContent='บันทึก';}
+  }
+}
+
 // ══════════════════════════════════════════
 //  ADD FEATURE MODAL
 // ══════════════════════════════════════════
 function openAddFeatureModal(){
+  if (!ensureWritable()) return;
   openModal('add-feature-modal',`
     <div class="modal-header"><span class="modal-title">＋ Add Feature</span><span class="modal-sub">สร้าง feature ใหม่</span></div>
     <div class="modal-body">
@@ -1123,10 +1912,12 @@ function openAddFeatureModal(){
         <option value="orange">🟠 Orange</option><option value="blue">🔵 Blue</option><option value="green">🟢 Green</option>
         <option value="purple">🟣 Purple</option><option value="teal">🩵 Teal</option><option value="amber">🟡 Amber</option>
       </select></div>
-      <div class="form-group"><label>Screens <span class="form-hint">บรรทัดละ 1 ชื่อ</span></label>
-        <textarea class="form-textarea" id="ff-screens" rows="4" placeholder="Login form&#10;OTP verify&#10;Dashboard"></textarea></div>
-      <div class="form-group"><label>Tags <span class="form-hint">คั่นด้วย comma</span></label>
-        <input class="form-input" id="ff-tags" placeholder="Journey, Mobile App, Security" /></div>
+      <div class="form-group"><label>Screens <span class="form-hint">บรรทัดละ 1 ชื่อ · เลือกสีได้ด้วยรูปแบบ ชื่อ|สี</span></label>
+        <textarea class="form-textarea" id="ff-screens" rows="5" placeholder="Login form|blue&#10;OTP verify|teal&#10;Dashboard|#7C3AED"></textarea>
+        <div class="form-hint" style="margin-top:4px;">สีที่รองรับ: purple, blue, orange, green, amber, teal หรือกำหนดเองแบบ #HEX</div>
+      </div>
+      <div class="form-group"><label>Tags <span class="form-hint">บรรทัดละ 1 tag · ใส่สีได้ด้วยรูปแบบ Tag|#HEX</span></label>
+        <textarea class="form-textarea" id="ff-tags" rows="4" placeholder="Journey&#10;Mobile App|#185FA5&#10;Security|#A32D2D"></textarea></div>
     </div>
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
@@ -1139,14 +1930,26 @@ async function submitAddFeature(){
   const name=document.getElementById('ff-name').value.trim();
   const desc=document.getElementById('ff-desc').value.trim();
   const theme=document.getElementById('ff-color').value;
-  const screenLines=document.getElementById('ff-screens').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const tagLines=document.getElementById('ff-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
-  if(!id||!name||!screenLines.length){showFormError('กรุณากรอก ID, Name และ Screens');return;}
+  const screenInputs=document.getElementById('ff-screens').value.split('\n').map(parseScreenLineInput).filter(item=>item.name);
+  const tags=parseFeatureTagsInput(document.getElementById('ff-tags').value, (THEME_COLORS[theme]||THEME_COLORS.orange).badge);
+  if(!id||!name||!screenInputs.length){showFormError('กรุณากรอก ID, Name และ Screens');return;}
   if(DB.features[id]){showFormError(`Feature ID "${id}" ซ้ำ`);return;}
   const th=THEME_COLORS[theme]||THEME_COLORS.orange;
-  const screens={};screenLines.forEach((n,i)=>{screens[`S${i+1}`]={label:`Screen ${i+1}`,name:n,cssClass:`sc-${id}-s${i+1}`};});
+  const screens={};
+  screenInputs.forEach((input,i)=>{
+    const style = buildScreenStyleFromToken(input.colorToken);
+    screens[`S${i+1}`] = {
+      label:`Screen ${i+1}`,
+      name:input.name,
+      cssClass:`sc-${id}-s${i+1}`,
+      tone: (SCREEN_THEME_COLORS[input.colorToken] ? input.colorToken : ''),
+      color: style?.color || '',
+      bg: style?.bg || '',
+      border: style?.border || '',
+    };
+  });
   const meta={id,name,emoji,color:th.color,colorBg:th.colorBg,colorBorder:th.colorBorder,
-    tags:tagLines.map(l=>({label:l,style:th.badge})),description:desc||name,screens};
+    tags:tags.length?tags:[{label:'Journey',style:th.badge}],description:desc||name,screens};
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังสร้าง...';}
   try{
@@ -1191,6 +1994,7 @@ function showFormError(msg){
 //  RESET STATUS
 // ══════════════════════════════════════════
 async function resetAllStatus(){
+  if (!ensureWritable()) return;
   if(!confirm('Reset ทุก status กลับเป็น No Run?'))return;
   showLoadingOverlay('กำลัง reset...');
   await resetAllStatusDB();
