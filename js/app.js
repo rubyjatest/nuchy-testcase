@@ -293,7 +293,7 @@ function toggleTheme() {
 
 
 initTheme();
-activeSortMode = getInitialSortMode();
+activeSortMode = '';
 
 async function driveProxyRequest(action, {
   method = 'GET',
@@ -1144,7 +1144,7 @@ async function onStatusChange(caseId,featureId,sel){
 
 function init(){
   initTheme();
-  activeSortMode = getInitialSortMode();
+  activeSortMode = '';
   FEATURES=buildFeatures();
   injectScreenStyles();buildNavTabs();renderOverview();updateHeaderStrip();
 }
