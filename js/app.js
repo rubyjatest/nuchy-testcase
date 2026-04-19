@@ -31,7 +31,6 @@ let gWriteQueue = {};
 let DB = { features: {}, status: {}, deletedCases: [], executions: {} };
 let DB_READY = false;
 let currentTheme = 'light';
-let activeSortMode = 'id-asc';
 let DRIVE_STATE = {
   rootFolderId: null,
   rootFolderName: '',
@@ -47,8 +46,6 @@ const APP_RUNTIME = {
   initialized: false,
   activeRequestId: 0,
 };
-
-const SORT_MODES = ['id-asc', 'id-desc', 'title-asc', 'title-desc'];
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
@@ -294,10 +291,6 @@ function toggleTheme() {
   setTheme(currentTheme === 'dark' ? 'light' : 'dark');
 }
 
-function getInitialSortMode() {
-  const saved = (localStorage.getItem('qa_sort_mode') || '').trim();
-  return SORT_MODES.includes(saved) ? saved : 'id-asc';
-}
 
 initTheme();
 activeSortMode = getInitialSortMode();
@@ -1275,7 +1268,7 @@ function renderFeature(feature){
       <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
         <div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
       <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
-        <button class="icon-btn" onclick="openEditFeatureModal('${meta.id}')">✏️ แก้ไข Feature</button>
+        <button class="icon-btn icon-btn-neutral" onclick="openEditFeatureModal('${meta.id}')">✏️ แก้ไข Feature</button>
         <button class="icon-btn icon-btn-danger" onclick="confirmDeleteFeature('${meta.id}')">🗑 ลบ Feature</button>
         <button class="btn-import-csv" onclick="openImportCsvModal('${meta.id}')">📥 Import CSV</button>
         <button class="btn-export-csv" onclick="exportCsv('${meta.id}')">📤 Export CSV</button>
@@ -1293,18 +1286,9 @@ function renderFeature(feature){
       <svg class="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M10 10l3 3"/></svg>
       <input type="text" id="search-input" placeholder="ค้นหา test case..." oninput="applyFilters()" />
     </div>
-    <div class="list-toolbar">
-      <div class="list-toolbar-item">
-        <span class="filter-label" style="margin:0;">Sort</span>
-        <select id="sort-select" class="form-select sort-select" onchange="setSortMode(this.value)">
-          <option value="id-asc"${activeSortMode==='id-asc'?' selected':''}>ID A-Z</option>
-          <option value="id-desc"${activeSortMode==='id-desc'?' selected':''}>ID Z-A</option>
-          <option value="title-asc"${activeSortMode==='title-asc'?' selected':''}>Test Case A-Z</option>
-          <option value="title-desc"${activeSortMode==='title-desc'?' selected':''}>Test Case Z-A</option>
-        </select>
-      </div>
+    <div class="list-toolbar list-toolbar-single">
       <div class="list-toolbar-item list-toolbar-actions">
-        <button class="icon-btn" onclick="toggleFilterPanel()">⚙️ Filter</button>
+        <button class="icon-btn icon-btn-neutral" onclick="toggleFilterPanel()">⚙️ Filter</button>
       </div>
     </div>
     <div class="filter-panel" id="filter-panel" hidden>
@@ -1403,30 +1387,6 @@ function updateFilterSummary(filteredCount,totalCount){
   summary.textContent = `${filteredCount} / ${totalCount} · ${detail}`;
 }
 
-function setSortMode(mode) {
-  if (!SORT_MODES.includes(mode)) return;
-  activeSortMode = mode;
-  localStorage.setItem('qa_sort_mode', mode);
-  applyFilters();
-}
-
-function normalizeCompareText(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function sortCasesForView(cases) {
-  const sorted = [...cases];
-  if (activeSortMode === 'id-asc') {
-    sorted.sort((a, b) => String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
-  } else if (activeSortMode === 'id-desc') {
-    sorted.sort((a, b) => String(b.id || '').localeCompare(String(a.id || ''), undefined, { numeric: true, sensitivity: 'base' }));
-  } else if (activeSortMode === 'title-asc') {
-    sorted.sort((a, b) => normalizeCompareText(a.title).localeCompare(normalizeCompareText(b.title), undefined, { numeric: true, sensitivity: 'base' }));
-  } else if (activeSortMode === 'title-desc') {
-    sorted.sort((a, b) => normalizeCompareText(b.title).localeCompare(normalizeCompareText(a.title), undefined, { numeric: true, sensitivity: 'base' }));
-  }
-  return sorted;
-}
 
 function applyFilters(){
   const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(!f)return;
@@ -1439,7 +1399,7 @@ function applyFilters(){
     return typeOk&&screenOk&&stOk&&srchOk;
   });
   updateFilterSummary(filtered.length, f.cases.length);
-  renderTable(sortCasesForView(filtered),f);
+  renderTable(filtered,f);
 }
 
 function renderTable(list,feature){
