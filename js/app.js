@@ -40,6 +40,14 @@ let DRIVE_STATE = {
   statusFileId: null,
 };
 
+const APP_RUNTIME = {
+  bootstrapping: false,
+  connecting: false,
+  resetting: false,
+  initialized: false,
+  activeRequestId: 0,
+};
+
 const SORT_MODES = ['id-asc', 'id-desc', 'title-asc', 'title-desc'];
 
 function cloneJson(value) {
@@ -515,13 +523,10 @@ async function useBundledFallback(err) {
     } catch {}
   }
   seedBundledData();
-  hideLoadingOverlay();
-  hideSavingIndicator();
+  DB_READY = false;
+  resetUiState({ keepDiagnostic: true });
   showFallbackBanner(buildErrorMessage(err));
-  document.getElementById('login-overlay').style.display = 'none';
-  document.getElementById('drive-expired-banner').style.display = 'none';
-  document.getElementById('drive-status-badge').style.display = 'none';
-  init();
+  syncAppView();
 }
 
 function ensureWritable() {
@@ -554,6 +559,90 @@ function rememberExecutorName(name) {
   const current = getExecutorNameList().filter(item => item !== normalized);
   const next = [normalized, ...current].slice(0, 30);
   localStorage.setItem('qa_executor_name_list', JSON.stringify(next));
+}
+
+function clearPendingWrites() {
+  Object.values(gWriteQueue).forEach(handle => clearTimeout(handle));
+  gWriteQueue = {};
+}
+
+function resetUiState({ keepDiagnostic = false } = {}) {
+  clearPendingWrites();
+  hideLoadingOverlay();
+  hideSavingIndicator();
+  hideFallbackBanner();
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  document.getElementById('drive-status-badge').style.display = 'none';
+  if (!keepDiagnostic) lastDriveDiagnostic = null;
+  lastDriveError = null;
+}
+
+function applyDrivePayload(payload) {
+  DRIVE_STATE = {
+    rootFolderId: payload.rootFolderId || null,
+    rootFolderName: payload.rootFolderName || '',
+    featuresFolderId: payload.featuresFolderId || null,
+    imagesFolderId: payload.imagesFolderId || null,
+    statusFileId: payload.statusFileId || null,
+  };
+
+  DB = {
+    features: {},
+    status: payload.status || {},
+    deletedCases: payload.deletedCases || [],
+    executions: payload.executions || {},
+  };
+
+  (payload.features || []).forEach(feature => {
+    const featureId = feature.featureId || feature.meta?.id;
+    if (!featureId) return;
+    DB.features[featureId] = {
+      meta: feature.meta,
+      cases: feature.cases || [],
+      fileId: feature.fileId || null,
+    };
+  });
+}
+
+function renderAppShell() {
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('drive-expired-banner').style.display = 'none';
+  document.getElementById('drive-status-badge').style.display = currentAppMode === APP_MODE.DRIVE ? 'inline-flex' : 'none';
+  init();
+  APP_RUNTIME.initialized = true;
+}
+
+function syncAppView() {
+  if (!APP_RUNTIME.initialized) {
+    renderAppShell();
+    return;
+  }
+  FEATURES = buildFeatures();
+  rebuildNav();
+  updateHeaderStrip();
+  if (currentFeatureId === 'overview') {
+    renderOverview();
+    return;
+  }
+  const feature = FEATURES.find(item => item.meta.id === currentFeatureId);
+  if (feature) {
+    renderFeature(feature);
+  } else {
+    currentFeatureId = 'overview';
+    renderOverview();
+  }
+}
+
+function beginAsyncFlow(flowName) {
+  const requestId = ++APP_RUNTIME.activeRequestId;
+  APP_RUNTIME[flowName] = true;
+  return requestId;
+}
+
+function endAsyncFlow(flowName, requestId) {
+  if (APP_RUNTIME.activeRequestId === requestId) {
+    APP_RUNTIME[flowName] = false;
+  }
 }
 
 async function handleLogin() {
@@ -598,30 +687,46 @@ async function handleLogout() {
 
 async function retryDriveConnect() {
   document.getElementById('drive-expired-banner').style.display = 'none';
-  await connectDriveWithServiceAccount();
+  await connectDriveWithServiceAccount({ reason: 'retry' });
 }
 
-async function connectDriveWithServiceAccount() {
-  showLoadingOverlay('กำลังโหลดข้อมูล');
+async function connectDriveWithServiceAccount({ reason = 'manual', silent = false } = {}) {
+  if (APP_RUNTIME.resetting) return false;
+  if (APP_RUNTIME.connecting) return false;
+
+  const requestId = beginAsyncFlow('connecting');
+  if (!silent) showLoadingOverlay('กำลังโหลดข้อมูล');
+
   try {
-    await loadAllData();
+    await loadAllData({ reason });
+    return true;
   } catch (err) {
     await useBundledFallback(err);
+    return false;
+  } finally {
+    if (!silent) hideLoadingOverlay();
+    endAsyncFlow('connecting', requestId);
   }
 }
 
-(async () => {
+async function bootstrapApp() {
+  if (APP_RUNTIME.bootstrapping) return;
+  const requestId = beginAsyncFlow('bootstrapping');
   try {
     const token = await getValidAccessToken();
-    if (token) {
-      document.getElementById('login-overlay').style.display = 'flex';
-      await connectDriveWithServiceAccount();
-    }
+    if (!token) return;
+    document.getElementById('login-overlay').style.display = 'flex';
+    await connectDriveWithServiceAccount({ reason: 'bootstrap' });
   } catch (err) {
     console.warn('Unable to restore session', err);
     localStorage.removeItem('qa_access_token');
+    document.getElementById('login-overlay').style.display = 'flex';
+  } finally {
+    endAsyncFlow('bootstrapping', requestId);
   }
-})();
+}
+
+bootstrapApp();
 
 supabaseClient.auth.onAuthStateChange((_event, session) => {
   if (session?.access_token) {
@@ -687,42 +792,16 @@ async function seedBundledFeaturesIfNeeded() {
   }
 }
 
-async function loadAllData() {
-  showLoadingOverlay('กำลังโหลดข้อมูล');
+async function loadAllData({ reason = 'manual' } = {}) {
   const payload = await driveProxyRequest('bootstrap');
-  DRIVE_STATE = {
-    rootFolderId: payload.rootFolderId || null,
-    rootFolderName: payload.rootFolderName || '',
-    featuresFolderId: payload.featuresFolderId || null,
-    imagesFolderId: payload.imagesFolderId || null,
-    statusFileId: payload.statusFileId || null,
-  };
-
-  DB = {
-    features: {},
-    status: payload.status || {},
-    deletedCases: payload.deletedCases || [],
-    executions: payload.executions || {},
-  };
-  (payload.features || []).forEach(feature => {
-    const featureId = feature.featureId || feature.meta?.id;
-    if (!featureId) return;
-    DB.features[featureId] = {
-      meta: feature.meta,
-      cases: feature.cases || [],
-      fileId: feature.fileId || null,
-    };
-  });
-
+  applyDrivePayload(payload);
   currentAppMode = APP_MODE.DRIVE;
   DB_READY = true;
   await seedBundledFeaturesIfNeeded();
-  hideLoadingOverlay();
-  hideFallbackBanner();
-  document.getElementById('login-overlay').style.display = 'none';
-  document.getElementById('drive-expired-banner').style.display = 'none';
-  document.getElementById('drive-status-badge').style.display = 'inline-flex';
-  init();
+  resetUiState({ keepDiagnostic: true });
+  if (reason !== 'reset') {
+    syncAppView();
+  }
 }
 
 function scheduleFeatureWrite(featureId) {
@@ -2113,13 +2192,23 @@ function showFormError(msg){
 // ══════════════════════════════════════════
 //  RESET STATUS
 // ══════════════════════════════════════════
-async function resetAllStatus(){
+async function resetAllStatus() {
   if (!ensureWritable()) return;
-  if(!confirm('Reset ทุก status กลับเป็น No Run?'))return;
+  if (APP_RUNTIME.connecting || APP_RUNTIME.resetting) return;
+  if (!confirm('Reset ทุก status กลับเป็น No Run?')) return;
+
+  const requestId = beginAsyncFlow('resetting');
   showLoadingOverlay('กำลัง reset...');
-  await resetAllStatusDB();
-  hideLoadingOverlay();
-  updateHeaderStrip();
-  if(currentFeatureId==='overview')renderOverview();
-  else{const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(f)renderFeature(f);}
+
+  try {
+    clearPendingWrites();
+    await resetAllStatusDB();
+    DB.status = {};
+    DB.deletedCases = [];
+    DB.executions = {};
+    syncAppView();
+  } finally {
+    hideLoadingOverlay();
+    endAsyncFlow('resetting', requestId);
+  }
 }
