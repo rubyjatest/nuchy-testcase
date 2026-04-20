@@ -140,9 +140,9 @@ function buildScreenStyleFromToken(colorToken) {
 
 const DEFAULT_PROJECT_ID = 'mobile-app';
 const DEFAULT_PROJECT_NAME = 'Mobile App';
-const PROJECT_SIDEBAR_KEY = 'qa-project-sidebar-collapsed';
+const PROJECT_SIDEBAR_KEY = 'qa-project-sidebar-open';
 let selectedProjectId = DEFAULT_PROJECT_ID;
-let isProjectSidebarCollapsed = localStorage.getItem(PROJECT_SIDEBAR_KEY) === '1';
+let isProjectSidebarOpen = localStorage.getItem(PROJECT_SIDEBAR_KEY) === '1';
 let _projectImportRows = [];
 
 function sanitizeProjectId(value, fallback = '') {
@@ -208,10 +208,50 @@ function setSelectedProject(projectId) {
   selectedProjectId = sanitizeProjectId(projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
 }
 
+function renderProjectSidebarDrawer() {
+  const backdrop = document.getElementById('project-sidebar-backdrop');
+  const drawer = document.getElementById('project-sidebar-drawer');
+  const list = document.getElementById('project-drawer-list');
+  if (!backdrop || !drawer || !list) return;
+  const projects = getProjectsList();
+  list.innerHTML = projects.map(item => {
+    const itemStats = getProjectStats(item.id);
+    return `
+      <button class="project-list-item ${item.id === selectedProjectId ? 'active' : ''}" onclick="selectProjectFromSidebar('${item.id}')" title="${escapeHtml(item.name)}">
+        <span class="project-dot"></span>
+        <span class="project-list-name">${escapeHtml(item.name)}</span>
+        <span class="project-list-count">${itemStats.qa}</span>
+      </button>`;
+  }).join('') || `<div class="empty-state compact"><div class="emoji">📁</div><p>ยังไม่มี project</p></div>`;
+  backdrop.hidden = !isProjectSidebarOpen;
+  drawer.classList.toggle('open', isProjectSidebarOpen);
+  drawer.setAttribute('aria-hidden', isProjectSidebarOpen ? 'false' : 'true');
+  document.body.classList.toggle('project-sidebar-open', isProjectSidebarOpen);
+}
+
+function openProjectSidebar() {
+  isProjectSidebarOpen = true;
+  localStorage.setItem(PROJECT_SIDEBAR_KEY, '1');
+  renderProjectSidebarDrawer();
+}
+
+function closeProjectSidebar() {
+  isProjectSidebarOpen = false;
+  localStorage.setItem(PROJECT_SIDEBAR_KEY, '0');
+  renderProjectSidebarDrawer();
+}
+
 function toggleProjectSidebar() {
-  isProjectSidebarCollapsed = !isProjectSidebarCollapsed;
-  localStorage.setItem(PROJECT_SIDEBAR_KEY, isProjectSidebarCollapsed ? '1' : '0');
-  if (currentFeatureId === 'projects') renderProjectsPage();
+  if (isProjectSidebarOpen) closeProjectSidebar();
+  else openProjectSidebar();
+}
+
+function selectProjectFromSidebar(projectId) {
+  setSelectedProject(projectId);
+  currentFeatureId = 'projects';
+  closeProjectSidebar();
+  rebuildNav();
+  renderProjectsPage();
 }
 
 function openProjectCreateModal() {
@@ -284,6 +324,7 @@ function renderProjectsPage() {
   const projects = getProjectsList();
   const project = projects.find(item => item.id === selectedProjectId) || projects[0];
   if (project) selectedProjectId = project.id;
+  renderProjectSidebarDrawer();
   const stats = project ? getProjectStats(project.id) : { features: 0, qa: 0, dev: 0, defects: 0, progress: 0 };
   const projectStores = project ? getProjectFeatureStores(project.id) : [];
   const projectCards = projectStores.map(store => {
@@ -310,63 +351,43 @@ function renderProjectsPage() {
         </div>
       </div>`;
   }).join('');
-  document.getElementById('main-content').innerHTML = `
-    <div class="projects-shell ${isProjectSidebarCollapsed ? 'collapsed' : ''}">
-      <aside class="projects-sidebar">
-        <div class="projects-sidebar-top">
-          <button class="sidebar-toggle-btn" onclick="toggleProjectSidebar()">☰</button>
-          <div class="projects-sidebar-title">Projects</div>
-        </div>
-        <button class="projects-add-btn" onclick="openProjectCreateModal()">＋ <span>Project</span></button>
-        <div class="projects-list">
-          ${projects.map(item => { const itemStats = getProjectStats(item.id); return `
-            <button class="project-list-item ${item.id === selectedProjectId ? 'active' : ''}" onclick="switchProjectView('${item.id}')" title="${escapeHtml(item.name)}">
-              <span class="project-dot"></span>
-              <span class="project-list-name">${escapeHtml(item.name)}</span>
-              <span class="project-list-count">${itemStats.qa}</span>
-            </button>`; }).join('')}
-        </div>
-      </aside>
-      <section class="projects-main">
-        ${project ? `
-          <div class="project-overview-card">
-            <div class="project-overview-main">
-              <div class="project-overview-emoji">🗂️</div>
-              <div>
-                <div class="project-overview-name">${escapeHtml(project.name)}</div>
-                <div class="project-overview-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div>
-                <div class="project-overview-pills">
-                  <span class="project-pill blue">${stats.features} Features</span>
-                  <span class="project-pill green">${stats.qa} QA Cases</span>
-                  <span class="project-pill purple">${stats.dev} Dev Cases</span>
-                  <span class="project-pill orange">${stats.defects} Defects</span>
-                </div>
-              </div>
-            </div>
-            <div class="project-overview-actions">
-              <button class="icon-btn icon-btn-neutral" onclick="openEditProjectModal('${project.id}')">✏️ แก้ไข Project</button>
-              <button class="btn-import-csv" onclick="openProjectImportModal('${project.id}')">📦 Project Sheet Import</button>
-              <button class="btn-add-case" onclick="openAddFeatureModal('${project.id}')">＋ Add Feature</button>
+  document.getElementById('main-content').innerHTML = project ? `
+    <section class="projects-main standalone">
+      <div class="project-overview-card">
+        <div class="project-overview-main">
+          <div class="project-overview-emoji">🗂️</div>
+          <div>
+            <div class="project-overview-name">${escapeHtml(project.name)}</div>
+            <div class="project-overview-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div>
+            <div class="project-overview-pills">
+              <span class="project-pill blue">${stats.features} Features</span>
+              <span class="project-pill green">${stats.qa} QA Cases</span>
+              <span class="project-pill purple">${stats.dev} Dev Cases</span>
+              <span class="project-pill orange">${stats.defects} Defects</span>
             </div>
           </div>
-          <div class="project-dashboard-card">
-            <div class="project-stat"><strong>${stats.features}</strong><span>Features</span></div>
-            <div class="project-stat"><strong>${stats.qa}</strong><span>QA Cases</span></div>
-            <div class="project-stat"><strong>${stats.dev}</strong><span>Dev Cases</span></div>
-            <div class="project-stat"><strong>${stats.defects}</strong><span>Defects</span></div>
-            <div class="project-progress-wrap"><label>Project QA progress</label><div class="progress-line full"><span style="width:${stats.progress}%;"></span></div></div>
-          </div>
-          <div class="section-sep"><span>Features in ${escapeHtml(project.name)}</span><span class="count-pill">${projectStores.length} features</span></div>
-          <div class="project-feature-list">${projectCards || `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี feature ใน project นี้</p></div>`}</div>
-        ` : `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี project — กด <strong>＋ Project</strong> เพื่อเริ่ม</p></div>`}
-      </section>
-    </div>`;
+        </div>
+        <div class="project-overview-actions">
+          <button class="icon-btn icon-btn-neutral" onclick="openEditProjectModal('${project.id}')">✏️ แก้ไข Project</button>
+          <button class="btn-import-csv" onclick="openProjectImportModal('${project.id}')">📦 Project Sheet Import</button>
+          <button class="btn-add-case" onclick="openAddFeatureModal('${project.id}')">＋ Add Feature</button>
+        </div>
+      </div>
+      <div class="project-dashboard-card">
+        <div class="project-stat"><strong>${stats.features}</strong><span>Features</span></div>
+        <div class="project-stat"><strong>${stats.qa}</strong><span>QA Cases</span></div>
+        <div class="project-stat"><strong>${stats.dev}</strong><span>Dev Cases</span></div>
+        <div class="project-stat"><strong>${stats.defects}</strong><span>Defects</span></div>
+        <div class="project-progress-wrap"><label>Project QA progress</label><div class="progress-line full"><span style="width:${stats.progress}%;"></span></div></div>
+      </div>
+      <div class="section-sep"><span>Features in ${escapeHtml(project.name)}</span><span class="count-pill">${projectStores.length} features</span></div>
+      <div class="project-feature-list">${projectCards || `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี feature ใน project นี้</p></div>`}</div>
+    </section>`
+    : `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี project — กด <strong>☰</strong> เพื่อเปิด sidebar แล้วสร้าง project</p></div>`;
 }
 
 function switchProjectView(projectId) {
-  setSelectedProject(projectId);
-  currentFeatureId = 'projects';
-  renderProjectsPage();
+  selectProjectFromSidebar(projectId);
 }
 
 function openProjectImportModal(projectId = selectedProjectId) {
@@ -1495,7 +1516,7 @@ function init(){
   initTheme();
   activeSortMode = '';
   FEATURES=buildFeatures();
-  injectScreenStyles();buildNavTabs();renderOverview();updateHeaderStrip();
+  injectScreenStyles();buildNavTabs();renderOverview();updateHeaderStrip();renderProjectSidebarDrawer();
 }
 
 function injectScreenStyles(){
@@ -1526,10 +1547,8 @@ function updateHeaderStrip(){
 function buildNavTabs(){
   const wrap=document.getElementById('nav-tabs');
   const total=FEATURES.reduce((s,f)=>s+f.cases.length,0);
-  const projectCount=getProjectsList().length;
   wrap.innerHTML=`
-    <button class="nav-tab${currentFeatureId==='overview'?' active':''}" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>
-    <button class="nav-tab${currentFeatureId==='projects'?' active':''}" id="tab-projects" onclick="switchTab('projects')">🗂️ Projects <span class="tab-count">${projectCount}</span></button>`;
+    <button class="nav-tab${currentFeatureId==='overview'?' active':''}" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>`;
 }
 function rebuildNav(){
   FEATURES=buildFeatures();
@@ -1539,13 +1558,11 @@ function switchTab(id){
   currentFeatureId=id; expandedCaseId=null; activeType='all'; activeScreen='all'; activeStatusFilt='all';
   document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
   if(id==='overview') document.getElementById('tab-overview')?.classList.add('active');
-  if(id==='projects') document.getElementById('tab-projects')?.classList.add('active');
   if(id==='overview'){ renderOverview(); return; }
   if(id==='projects'){ setSelectedProject(selectedProjectId); renderProjectsPage(); return; }
   const f=FEATURES.find(f=>f.meta.id===id);
   if(f){
     selectedProjectId = sanitizeProjectId(f.meta.projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
-    document.getElementById('tab-projects')?.classList.add('active');
     renderFeature(f);
   }
 }
@@ -1572,7 +1589,6 @@ function renderOverview(){
     <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <button class="btn-import-csv" onclick="openBulkImportModal()">📦 Bulk CSV</button>
     </div>
-    <div class="list-toolbar list-toolbar-single" style="margin-top:0;margin-bottom:14px;"><div class="list-toolbar-item list-toolbar-actions"><button class="icon-btn icon-btn-neutral" onclick="switchTab('projects')">🗂️ เปิดหน้า Projects</button></div></div>
     <div class="section-sep"><span>Features</span><span class="count-pill">${FEATURES.length} features · ${total} cases</span></div>
     <div class="ov-list" id="ov-list">
       ${FEATURES.length===0

@@ -86,6 +86,17 @@
     </div>
   </div>
 </header>
+<div id="project-sidebar-backdrop" class="project-sidebar-backdrop" hidden onclick="closeProjectSidebar()"></div>
+<aside id="project-sidebar-drawer" class="project-sidebar-drawer" aria-hidden="true">
+  <div class="project-drawer-inner">
+    <div class="project-drawer-head">
+      <div class="project-drawer-title">Projects</div>
+      <button class="project-drawer-close" type="button" onclick="closeProjectSidebar()" aria-label="Close projects sidebar">✕</button>
+    </div>
+    <button class="projects-add-btn project-drawer-add" onclick="openProjectCreateModal()">＋ <span>Project</span></button>
+    <div id="project-drawer-list" class="projects-list project-drawer-list"></div>
+  </div>
+</aside>
 
 <!-- ── NAV TABS ── -->
 <nav class="nav-tabs-wrap">

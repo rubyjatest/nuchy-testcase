@@ -1320,3 +1320,24 @@ body {
 .project-feature-count{margin-top:8px;color:var(--text3);font-size:13px;}
 .feature-breadcrumb{display:flex;align-items:center;gap:10px;margin-bottom:16px;color:var(--text3);font-weight:600;}
 @media (max-width: 980px){.projects-shell,.projects-shell.collapsed{grid-template-columns:1fr;}.projects-sidebar{position:static;}.project-overview-card,.project-dashboard-card,.project-feature-card{padding:18px;}.project-overview-card{flex-direction:column;}.project-dashboard-card{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:18px;}.project-stat{border-right:none;padding:0;}.project-progress-wrap{padding-left:0;grid-column:1/-1;}.project-feature-card{flex-direction:column;align-items:flex-start;}.project-feature-side{width:100%;text-align:left;min-width:0;}.project-feature-status{justify-content:flex-start;}}
+
+
+.project-sidebar-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);backdrop-filter:blur(2px);z-index:120;}
+.project-sidebar-drawer{position:fixed;top:0;left:0;bottom:0;width:320px;max-width:86vw;background:var(--surface);border-right:1px solid var(--border);box-shadow:0 18px 60px rgba(15,23,42,.22);transform:translateX(-100%);transition:transform .24s ease;z-index:130;padding-top:84px;}
+.project-sidebar-drawer.open{transform:translateX(0);}
+.project-drawer-inner{display:flex;flex-direction:column;height:100%;padding:16px;gap:14px;overflow:auto;}
+.project-drawer-head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.project-drawer-title{font-size:22px;font-weight:700;color:var(--text1);}
+.project-drawer-close{width:36px;height:36px;border-radius:12px;border:1px solid var(--border);background:var(--surface2);color:var(--text2);cursor:pointer;}
+.project-drawer-add{width:100%;justify-content:center;}
+.project-drawer-list{display:flex;flex-direction:column;gap:10px;padding-bottom:24px;}
+.projects-main.standalone{max-width:1080px;margin:0 auto;}
+body.project-sidebar-open{overflow:hidden;}
+.empty-state.compact{padding:18px 12px;}
+.empty-state.compact p{margin:0;font-size:13px;}
+@media (max-width: 900px){
+  .project-sidebar-drawer{width:280px;padding-top:78px;}
+  .projects-main.standalone{max-width:none;}
+}
+
+.projects-shell{display:block;}.projects-sidebar{display:none;}
