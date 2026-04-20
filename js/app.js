@@ -153,7 +153,7 @@ function sanitizeProjectId(value, fallback = '') {
 function ensureProjectRegistry() {
   if (!isPlainObject(DB.projects)) DB.projects = {};
   if (!DB.projects[DEFAULT_PROJECT_ID]) {
-    DB.projects[DEFAULT_PROJECT_ID] = { id: DEFAULT_PROJECT_ID, name: DEFAULT_PROJECT_NAME, overview: 'ภาพรวมของโปรเจกต์', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    DB.projects[DEFAULT_PROJECT_ID] = { id: DEFAULT_PROJECT_ID, name: DEFAULT_PROJECT_NAME, overview: 'ภาพรวมของโปรเจกต์', iconEmoji: '📱', iconImage: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   }
   Object.values(DB.features || {}).forEach(store => {
     if (!store?.meta) return;
@@ -163,7 +163,7 @@ function ensureProjectRegistry() {
     meta.projectName = meta.projectName || DB.projects[projectId]?.name || DEFAULT_PROJECT_NAME;
     meta.projectOverview = meta.projectOverview || DB.projects[projectId]?.overview || '';
     if (!DB.projects[projectId]) {
-      DB.projects[projectId] = { id: projectId, name: meta.projectName, overview: meta.projectOverview || '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      DB.projects[projectId] = { id: projectId, name: meta.projectName, overview: meta.projectOverview || '', iconEmoji: '🗂️', iconImage: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
     }
   });
 }
@@ -183,6 +183,14 @@ function getProjectsList() {
   const list = Object.values(byId).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
   if (!list.find(item => item.id === selectedProjectId)) selectedProjectId = list[0]?.id || DEFAULT_PROJECT_ID;
   return list;
+}
+
+function getProjectAvatarHtml(project, extraClass = '') {
+  const cls = `project-avatar ${extraClass}`.trim();
+  const image = String(project?.iconImage || '').trim();
+  const emoji = String(project?.iconEmoji || '').trim() || '🗂️';
+  if (image) return `<span class=\"${cls}\"><img src=\"${escapeHtml(image)}\" alt=\"${escapeHtml(project?.name || 'Project')}\" /></span>`;
+  return `<span class=\"${cls} project-avatar-emoji\">${escapeHtml(emoji)}</span>`;
 }
 
 function getProjectFeatureStores(projectId) {
@@ -214,15 +222,21 @@ function renderProjectSidebarDrawer() {
   const list = document.getElementById('project-drawer-list');
   if (!backdrop || !drawer || !list) return;
   const projects = getProjectsList();
-  list.innerHTML = projects.map(item => {
+  const overviewButton = `
+    <button class="project-nav-link ${currentFeatureId === 'overview' ? 'active' : ''}" onclick="closeProjectSidebar(); switchTab('overview')">
+      <span class="project-nav-icon">📋</span>
+      <span>Overview</span>
+    </button>`;
+  const projectItems = projects.map(item => {
     const itemStats = getProjectStats(item.id);
     return `
-      <button class="project-list-item ${item.id === selectedProjectId ? 'active' : ''}" onclick="selectProjectFromSidebar('${item.id}')" title="${escapeHtml(item.name)}">
-        <span class="project-dot"></span>
+      <button class="project-list-item ${item.id === selectedProjectId && currentFeatureId !== 'overview' ? 'active' : ''}" onclick="selectProjectFromSidebar('${item.id}')" title="${escapeHtml(item.name)}">
+        ${getProjectAvatarHtml(item, 'project-list-avatar')}
         <span class="project-list-name">${escapeHtml(item.name)}</span>
         <span class="project-list-count">${itemStats.qa}</span>
       </button>`;
   }).join('') || `<div class="empty-state compact"><div class="emoji">📁</div><p>ยังไม่มี project</p></div>`;
+  list.innerHTML = `<div class="project-nav-group">${overviewButton}</div><div class="project-drawer-section-label">Projects</div>${projectItems}`;
   backdrop.hidden = !isProjectSidebarOpen;
   drawer.classList.toggle('open', isProjectSidebarOpen);
   drawer.setAttribute('aria-hidden', isProjectSidebarOpen ? 'false' : 'true');
@@ -259,7 +273,11 @@ function openProjectCreateModal() {
   openModal('add-project-modal', `
     <div class="modal-header"><span class="modal-title">＋ Add Project</span><span class="modal-sub">สร้าง project ใหม่</span></div>
     <div class="modal-body">
-      <div class="form-group"><label>Project name</label><input class="form-input" id="pj-name" placeholder="เช่น Zeen Audit" /></div>
+      <div class="form-row2">
+        <div class="form-group"><label>Project name</label><input class="form-input" id="pj-name" placeholder="เช่น Zeen Audit" /></div>
+        <div class="form-group"><label>Emoji</label><input class="form-input" id="pj-emoji" placeholder="🗂️" maxlength="4" /></div>
+      </div>
+      <div class="form-group"><label>Project image URL <span class="form-hint">วางลิงก์รูปแทน emoji ได้</span></label><input class="form-input" id="pj-image" placeholder="https://..." /></div>
       <div class="form-group"><label>Overview</label><textarea class="form-textarea" id="pj-overview" rows="5" placeholder="อธิบาย project โดยรวม"></textarea></div>
     </div>
     <div class="modal-footer">
@@ -271,16 +289,25 @@ function openProjectCreateModal() {
 async function submitCreateProject() {
   const name = document.getElementById('pj-name').value.trim();
   const overview = document.getElementById('pj-overview').value.trim();
+  const iconEmoji = document.getElementById('pj-emoji').value.trim();
+  const iconImage = document.getElementById('pj-image').value.trim();
   if (!name) { showFormError('กรุณากรอกชื่อ Project'); return; }
   ensureProjectRegistry();
   const id = sanitizeProjectId(name, 'project-' + Date.now());
   if (DB.projects[id]) { showFormError('Project นี้มีอยู่แล้ว'); return; }
-  DB.projects[id] = { id, name, overview, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const okBtn = document.querySelector('.btn-modal-ok');
+  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลังสร้าง...'; }
+  showLoadingOverlay('กำลังสร้าง Project...');
+  DB.projects[id] = { id, name, overview, iconEmoji, iconImage, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   selectedProjectId = id;
-  await writeStatusFile();
-  closeModal();
-  syncAppView();
-  switchTab('projects');
+  try {
+    await writeStatusFile();
+    closeModal();
+    syncAppView();
+    switchTab('projects');
+  } finally {
+    hideLoadingOverlay();
+  }
 }
 
 function openEditProjectModal(projectId = selectedProjectId) {
@@ -291,12 +318,19 @@ function openEditProjectModal(projectId = selectedProjectId) {
   openModal('edit-project-modal', `
     <div class="modal-header"><span class="modal-title">✏️ Edit Project</span><span class="modal-sub">${escapeHtml(project.id)}</span></div>
     <div class="modal-body">
-      <div class="form-group"><label>Project name</label><input class="form-input" id="epj-name" value="${escapeHtml(project.name || '')}" /></div>
+      <div class="form-row2">
+        <div class="form-group"><label>Project name</label><input class="form-input" id="epj-name" value="${escapeHtml(project.name || '')}" /></div>
+        <div class="form-group"><label>Emoji</label><input class="form-input" id="epj-emoji" value="${escapeHtml(project.iconEmoji || '')}" placeholder="🗂️" maxlength="4" /></div>
+      </div>
+      <div class="form-group"><label>Project image URL <span class="form-hint">วางลิงก์รูปแทน emoji ได้</span></label><input class="form-input" id="epj-image" value="${escapeHtml(project.iconImage || '')}" placeholder="https://..." /></div>
       <div class="form-group"><label>Overview</label><textarea class="form-textarea" id="epj-overview" rows="6">${escapeHtml(project.overview || '')}</textarea></div>
     </div>
-    <div class="modal-footer">
-      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
-      <button class="btn-modal-ok" onclick="submitEditProject('${project.id}')">บันทึก Project</button>
+    <div class="modal-footer project-edit-footer">
+      <button class="btn-modal-danger btn-modal-danger-soft" onclick="confirmDeleteProject('${project.id}')">ลบ Project</button>
+      <span class="project-edit-actions">
+        <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+        <button class="btn-modal-ok" onclick="submitEditProject('${project.id}')">บันทึก Project</button>
+      </span>
     </div>`);
 }
 
@@ -305,6 +339,8 @@ async function submitEditProject(projectId) {
   const project = DB.projects[projectId];
   if (!project) return;
   project.name = document.getElementById('epj-name').value.trim() || project.name;
+  project.iconEmoji = document.getElementById('epj-emoji').value.trim();
+  project.iconImage = document.getElementById('epj-image').value.trim();
   project.overview = document.getElementById('epj-overview').value.trim();
   project.updatedAt = new Date().toISOString();
   Object.values(DB.features || {}).forEach(store => {
@@ -314,10 +350,48 @@ async function submitEditProject(projectId) {
       scheduleFeatureWrite(store.meta.id);
     }
   });
-  await writeStatusFile();
-  closeModal();
-  syncAppView();
-  switchTab('projects');
+  const okBtn = document.querySelector('.btn-modal-ok');
+  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลังบันทึก...'; }
+  showLoadingOverlay('กำลังบันทึก Project...');
+  try {
+    await writeStatusFile();
+    closeModal();
+    syncAppView();
+    switchTab('projects');
+  } finally {
+    hideLoadingOverlay();
+  }
+}
+
+function confirmDeleteProject(projectId) {
+  ensureProjectRegistry();
+  const project = DB.projects[projectId];
+  if (!project) return;
+  openConfirmModal('ลบ Project', `ลบ project <strong>${escapeHtml(project.name)}</strong> และ feature ทั้งหมดใน project นี้หรือไม่?`, async () => {
+    await deleteProjectCascade(projectId);
+  });
+}
+
+async function deleteProjectCascade(projectId) {
+  ensureProjectRegistry();
+  showLoadingOverlay('กำลังลบ Project...');
+  try {
+    const related = Object.values(DB.features || {}).filter(store => sanitizeProjectId(store?.meta?.projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID) === projectId).map(store => store.meta.id);
+    for (const featureId of related) {
+      await deleteFeatureData(featureId);
+    }
+    delete DB.projects[projectId];
+    const remaining = getProjectsList().filter(item => item.id !== projectId);
+    selectedProjectId = remaining[0]?.id || DEFAULT_PROJECT_ID;
+    FEATURES = buildFeatures();
+    injectScreenStyles();
+    updateHeaderStrip();
+    renderProjectSidebarDrawer();
+    closeModal();
+    switchTab('overview');
+  } finally {
+    hideLoadingOverlay();
+  }
 }
 
 function renderProjectsPage() {
@@ -352,28 +426,31 @@ function renderProjectsPage() {
       </div>`;
   }).join('');
   document.getElementById('main-content').innerHTML = project ? `
-    <section class="projects-main standalone">
-      <div class="project-overview-card">
-        <div class="project-overview-main">
-          <div class="project-overview-emoji">🗂️</div>
-          <div>
-            <div class="project-overview-name">${escapeHtml(project.name)}</div>
-            <div class="project-overview-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div>
-            <div class="project-overview-pills">
-              <span class="project-pill blue">${stats.features} Features</span>
-              <span class="project-pill green">${stats.qa} QA Cases</span>
-              <span class="project-pill purple">${stats.dev} Dev Cases</span>
-              <span class="project-pill orange">${stats.defects} Defects</span>
+    <section class="projects-main standalone projects-focus-page">
+      <div class="project-shell-card">
+        <div class="project-shell-head">
+          <div class="project-shell-head-main">
+            ${getProjectAvatarHtml(project, 'project-shell-avatar')}
+            <div>
+              <div class="project-shell-title">${escapeHtml(project.name)}</div>
+              <div class="project-shell-sub">Project overview</div>
+              <div class="project-shell-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div>
             </div>
           </div>
+          <div class="project-overview-actions">
+            <button class="icon-btn icon-btn-neutral" onclick="openEditProjectModal('${project.id}')">✏️ แก้ไข Project</button>
+            <button class="btn-import-csv" onclick="openProjectImportModal('${project.id}')">📦 Project Sheet Import</button>
+            <button class="btn-add-case" onclick="openAddFeatureModal('${project.id}')">＋ Add Feature</button>
+          </div>
         </div>
-        <div class="project-overview-actions">
-          <button class="icon-btn icon-btn-neutral" onclick="openEditProjectModal('${project.id}')">✏️ แก้ไข Project</button>
-          <button class="btn-import-csv" onclick="openProjectImportModal('${project.id}')">📦 Project Sheet Import</button>
-          <button class="btn-add-case" onclick="openAddFeatureModal('${project.id}')">＋ Add Feature</button>
+        <div class="project-overview-pills compact">
+          <span class="project-pill blue">${stats.features} Features</span>
+          <span class="project-pill green">${stats.qa} QA Cases</span>
+          <span class="project-pill purple">${stats.dev} Dev Cases</span>
+          <span class="project-pill orange">${stats.defects} Defects</span>
         </div>
       </div>
-      <div class="project-dashboard-card">
+      <div class="project-dashboard-card compact-grid">
         <div class="project-stat"><strong>${stats.features}</strong><span>Features</span></div>
         <div class="project-stat"><strong>${stats.qa}</strong><span>QA Cases</span></div>
         <div class="project-stat"><strong>${stats.dev}</strong><span>Dev Cases</span></div>
@@ -462,37 +539,44 @@ function parseProjectSheetCsv(text, projectId) {
 
 async function submitProjectImport(projectId) {
   if (!_projectImportRows.length) return;
+  const okBtn = document.getElementById('btn-project-import');
+  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลัง Import...'; }
+  showLoadingOverlay('กำลัง import project sheet...');
   ensureProjectRegistry();
-  const project = DB.projects[projectId] || { id: projectId, name: DEFAULT_PROJECT_NAME, overview: '' };
+  const project = DB.projects[projectId] || { id: projectId, name: DEFAULT_PROJECT_NAME, overview: '', iconEmoji: '🗂️', iconImage: '' };
   const grouped = {};
   _projectImportRows.forEach(row => {
     if (!grouped[row.featureId]) grouped[row.featureId] = [];
     grouped[row.featureId].push(row);
   });
-  for (const [featureId, rows] of Object.entries(grouped)) {
-    let store = DB.features[featureId];
-    const uniqueScreens = [...new Set(rows.map(item => item.screenName).filter(Boolean))];
-    const screenMap = Object.fromEntries(uniqueScreens.map((name, idx) => [name, `S${idx + 1}`]));
-    if (!store) {
-      store = DB.features[featureId] = { meta: buildFeatureMetaFromImport(projectId, project.name, rows[0], uniqueScreens), cases: [], devCases: [], defects: [], fileId: null };
-    } else {
-      store.meta.projectId = projectId;
-      store.meta.projectName = project.name;
-      store.meta.projectOverview = project.overview || '';
-      store.meta.screens = {};
-      uniqueScreens.forEach((name, idx) => { store.meta.screens[`S${idx + 1}`] = { label: `Screen ${idx + 1}`, name, cssClass: `sc-${featureId}-s${idx + 1}` }; });
+  try {
+    for (const [featureId, rows] of Object.entries(grouped)) {
+      let store = DB.features[featureId];
+      const uniqueScreens = [...new Set(rows.map(item => item.screenName).filter(Boolean))];
+      const screenMap = Object.fromEntries(uniqueScreens.map((name, idx) => [name, `S${idx + 1}`]));
+      if (!store) {
+        store = DB.features[featureId] = { meta: buildFeatureMetaFromImport(projectId, project.name, rows[0], uniqueScreens), cases: [], devCases: [], defects: [], fileId: null };
+      } else {
+        store.meta.projectId = projectId;
+        store.meta.projectName = project.name;
+        store.meta.projectOverview = project.overview || '';
+        store.meta.screens = {};
+        uniqueScreens.forEach((name, idx) => { store.meta.screens[`S${idx + 1}`] = { label: `Screen ${idx + 1}`, name, cssClass: `sc-${featureId}-s${idx + 1}` }; });
+      }
+      const byCase = Object.fromEntries((store.cases || []).map(item => [item.id, item]));
+      rows.forEach(row => {
+        byCase[row.case.id] = { ...(byCase[row.case.id] || {}), ...row.case, screen: screenMap[row.screenName] || 'S1' };
+      });
+      store.cases = Object.values(byCase);
+      await persistFeatureFile(featureId);
     }
-    const byCase = Object.fromEntries((store.cases || []).map(item => [item.id, item]));
-    rows.forEach(row => {
-      byCase[row.case.id] = { ...(byCase[row.case.id] || {}), ...row.case, screen: screenMap[row.screenName] || 'S1' };
-    });
-    store.cases = Object.values(byCase);
-    await persistFeatureFile(featureId);
+    await writeStatusFile();
+    closeModal();
+    syncAppView();
+    switchTab('projects');
+  } finally {
+    hideLoadingOverlay();
   }
-  await writeStatusFile();
-  closeModal();
-  syncAppView();
-  switchTab('projects');
 }
 
 
@@ -1545,10 +1629,19 @@ function updateHeaderStrip(){
 }
 
 function buildNavTabs(){
-  const wrap=document.getElementById('nav-tabs');
-  const total=FEATURES.reduce((s,f)=>s+f.cases.length,0);
-  wrap.innerHTML=`
-    <button class="nav-tab${currentFeatureId==='overview'?' active':''}" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>`;
+  const wrap = document.getElementById('nav-tabs');
+  if (!wrap) return;
+  FEATURES = buildFeatures();
+  const feature = FEATURES.find(item => item.meta.id === currentFeatureId);
+  if (!feature) {
+    wrap.innerHTML = '';
+    wrap.parentElement?.classList.add('nav-tabs-wrap-hidden');
+    return;
+  }
+  wrap.parentElement?.classList.remove('nav-tabs-wrap-hidden');
+  const projectId = sanitizeProjectId(feature.meta.projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+  const siblings = getProjectFeatureStores(projectId).map(store => store.meta).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  wrap.innerHTML = siblings.map(meta => `<button class="nav-tab${meta.id===currentFeatureId?' active':''}" onclick="switchTab('${meta.id}')">${escapeHtml(meta.emoji || '📋')} ${escapeHtml(meta.name)}</button>`).join('');
 }
 function rebuildNav(){
   FEATURES=buildFeatures();
@@ -1556,45 +1649,26 @@ function rebuildNav(){
 }
 function switchTab(id){
   currentFeatureId=id; expandedCaseId=null; activeType='all'; activeScreen='all'; activeStatusFilt='all';
-  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
-  if(id==='overview') document.getElementById('tab-overview')?.classList.add('active');
-  if(id==='overview'){ renderOverview(); return; }
-  if(id==='projects'){ setSelectedProject(selectedProjectId); renderProjectsPage(); return; }
+  if(id==='overview'){ renderOverview(); rebuildNav(); return; }
+  if(id==='projects'){ setSelectedProject(selectedProjectId); renderProjectsPage(); rebuildNav(); return; }
   const f=FEATURES.find(f=>f.meta.id===id);
   if(f){
     selectedProjectId = sanitizeProjectId(f.meta.projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
     renderFeature(f);
+    rebuildNav();
   }
 }
 
 // ── OVERVIEW ──────────────────────────────
 function renderOverview(){
   FEATURES=buildFeatures();
-  const ac=FEATURES.flatMap(f=>f.cases),total=ac.length,counts=getStatusCounts(ac);
-  const statNums={passed:'var(--green)',failed:'var(--red)',executing:'var(--blue)',blocked:'var(--amber)',cancelled:'var(--purple)','no-run':'var(--text3)'};
-  document.getElementById('main-content').innerHTML=`
-    <div class="ov-summary-bar">
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--blue);">${total}</span><span class="ov-summary-lbl">Total cases</span></div>
-      <div class="ov-divider"></div>
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--text2);">${FEATURES.length}</span><span class="ov-summary-lbl">Features</span></div>
-      <div class="ov-divider"></div>
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--orange);">${getProjectsList().length}</span><span class="ov-summary-lbl">Projects</span></div>
-      <div class="ov-divider"></div>
-      ${STATUSES.map(s=>`<div class="ov-summary-item"><span class="ov-summary-num" style="color:${statNums[s.key]};">${counts[s.key]}</span><span class="ov-summary-lbl">${s.label}</span></div>`).join('')}
-      <div class="ov-divider"></div>
-      <div class="ov-progress-wrap"><div class="ov-progress-label">Overall progress</div>
-        <div class="ov-progress-bar" id="ov-global-progress">${buildProgressBar(counts,total,'ov-pb-seg')}</div>
-      </div>
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <button class="btn-import-csv" onclick="openBulkImportModal()">📦 Bulk CSV</button>
-    </div>
-    <div class="section-sep"><span>Features</span><span class="count-pill">${FEATURES.length} features · ${total} cases</span></div>
-    <div class="ov-list" id="ov-list">
-      ${FEATURES.length===0
-        ?`<div class="empty-state"><div class="emoji">📂</div><p>ยังไม่มี feature — กด <strong>＋ Feature</strong> เพื่อเริ่ม</p></div>`
-        :FEATURES.map(f=>buildFeatureRow(f)).join('')}
-    </div>`;
+  renderProjectSidebarDrawer();
+  const projects = getProjectsList();
+  const cards = projects.map(project => {
+    const stats = getProjectStats(project.id);
+    return `<div class="overview-project-card"><div class="overview-project-head"><div class="overview-project-main">${getProjectAvatarHtml(project, 'overview-project-avatar')}<div><div class="overview-project-name">${escapeHtml(project.name)}</div><div class="overview-project-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div></div></div><div class="overview-project-badges"><span class="project-pill blue">${stats.features} Features</span><span class="project-pill green">${stats.qa} QA</span><span class="project-pill purple">${stats.dev} Dev</span><span class="project-pill orange">${stats.defects} Defects</span></div></div><div class="overview-project-foot"><div class="progress-line full"><span style="width:${stats.progress}%;"></span></div><div class="overview-project-meta">เลือก project จากปุ่ม ☰ เพื่อเข้าไปจัดการ feature</div></div></div>`;
+  }).join('');
+  document.getElementById('main-content').innerHTML=`<section class="overview-projects-page"><div class="section-sep"><span>Projects Overview</span><span class="count-pill">${projects.length} projects</span></div><div class="overview-project-list">${cards || `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี project — กด <strong>☰</strong> เพื่อสร้าง</p></div>`}</div></section>`;
 }
 
 function buildFeatureRow(f){
@@ -1625,8 +1699,6 @@ function refreshFeatureRowStats(fid){
     `<span class="ov-mini-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} ${counts[s.key]}</span>`
   ).join('')||`<span style="font-size:11px;color:var(--text3);">No Run</span>`;
   el.innerHTML=`<div class="ov-stat-row">${mini}</div><div class="ov-progress-track" style="width:180px;">${buildProgressBar(counts,total,'ov-pt-seg')}</div><div style="font-size:11px;color:var(--text3);">${total} cases</div>`;
-  const gp=document.getElementById('ov-global-progress');
-  if(gp){const ac=FEATURES.flatMap(f=>f.cases);gp.innerHTML=buildProgressBar(getStatusCounts(ac),ac.length,'ov-pb-seg');}
 }
 
 // ── FEATURE VIEW ───────────────────────────
@@ -1640,6 +1712,10 @@ function renderFeature(feature){
   const defectCount = (feature.defects || []).length;
   const isQaTab = activeFeatureTab === 'qa';
   document.getElementById('main-content').innerHTML=`
+    <div class="feature-topline">
+      <button class="icon-btn icon-btn-neutral" onclick="switchTab('projects')">← กลับไปที่ ${escapeHtml(meta.projectName || 'Project')}</button>
+      <span class="count-pill">${getProjectFeatureStores(sanitizeProjectId(meta.projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID)).length} features ใน project เดียวกัน</span>
+    </div>
     <div class="feature-header">
       <div style="font-size:24px;">${meta.emoji}</div>
       <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
@@ -2980,8 +3056,10 @@ async function submitEditFeature(featureId){
 // ══════════════════════════════════════════
 //  ADD FEATURE MODAL
 // ══════════════════════════════════════════
-function openAddFeatureModal(){
+function openAddFeatureModal(projectId = selectedProjectId){
   if (!ensureWritable()) return;
+  const targetProjectId = sanitizeProjectId(projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+  const targetProject = (DB.projects || {})[targetProjectId] || { id: targetProjectId, name: DEFAULT_PROJECT_NAME, overview: '' };
   openModal('add-feature-modal',`
     <div class="modal-header"><span class="modal-title">＋ Add Feature</span><span class="modal-sub">สร้าง feature ใหม่</span></div>
     <div class="modal-body">
@@ -2990,7 +3068,10 @@ function openAddFeatureModal(){
         <div class="form-group"><label>Emoji</label><input class="form-input" id="ff-emoji" placeholder="🛒" maxlength="2" /></div>
       </div>
       <div class="form-group"><label>Feature name</label><input class="form-input" id="ff-name" placeholder="เช่น Checkout Flow" /></div>
-      <div class="form-group"><label>Description</label><input class="form-input" id="ff-desc" placeholder="อธิบาย feature นี้" /></div>
+      <div class="form-row2">
+        <div class="form-group"><label>Description</label><input class="form-input" id="ff-desc" placeholder="อธิบาย feature นี้" /></div>
+        <div class="form-group"><label>Project</label><input class="form-input" value="${escapeHtml(targetProject.name)}" disabled /></div>
+      </div>
       <div class="form-group"><label>Color theme</label><select class="form-select" id="ff-color">
         <option value="orange">🟠 Orange</option><option value="blue">🔵 Blue</option><option value="green">🟢 Green</option>
         <option value="purple">🟣 Purple</option><option value="teal">🩵 Teal</option><option value="amber">🟡 Amber</option>
@@ -3031,8 +3112,9 @@ async function submitAddFeature(){
       border: style?.border || '',
     };
   });
+  const targetProject = (DB.projects || {})[sanitizeProjectId(selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID)] || { id: sanitizeProjectId(selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID), name: DEFAULT_PROJECT_NAME, overview: '' };
   const meta={id,name,emoji,color:th.color,colorBg:th.colorBg,colorBorder:th.colorBorder,
-    tags:tags.length?tags:[{label:'Journey',style:th.badge}],description:desc||name,screens};
+    tags:tags.length?tags:[{label:'Journey',style:th.badge}],description:desc||name,screens,projectId:targetProject.id,projectName:targetProject.name,projectOverview:targetProject.overview||''};
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังสร้าง...';}
   try{
