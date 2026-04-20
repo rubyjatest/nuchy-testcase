@@ -138,6 +138,343 @@ function buildScreenStyleFromToken(colorToken) {
   return null;
 }
 
+const DEFAULT_PROJECT_ID = 'mobile-app';
+const DEFAULT_PROJECT_NAME = 'Mobile App';
+const PROJECT_SIDEBAR_KEY = 'qa-project-sidebar-collapsed';
+let selectedProjectId = DEFAULT_PROJECT_ID;
+let isProjectSidebarCollapsed = localStorage.getItem(PROJECT_SIDEBAR_KEY) === '1';
+let _projectImportRows = [];
+
+function sanitizeProjectId(value, fallback = '') {
+  const normalized = String(value || fallback || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return normalized || DEFAULT_PROJECT_ID;
+}
+
+function ensureProjectRegistry() {
+  if (!isPlainObject(DB.projects)) DB.projects = {};
+  if (!DB.projects[DEFAULT_PROJECT_ID]) {
+    DB.projects[DEFAULT_PROJECT_ID] = { id: DEFAULT_PROJECT_ID, name: DEFAULT_PROJECT_NAME, overview: 'ภาพรวมของโปรเจกต์', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  }
+  Object.values(DB.features || {}).forEach(store => {
+    if (!store?.meta) return;
+    const meta = store.meta;
+    const projectId = sanitizeProjectId(meta.projectId || meta.projectName || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+    meta.projectId = projectId;
+    meta.projectName = meta.projectName || DB.projects[projectId]?.name || DEFAULT_PROJECT_NAME;
+    meta.projectOverview = meta.projectOverview || DB.projects[projectId]?.overview || '';
+    if (!DB.projects[projectId]) {
+      DB.projects[projectId] = { id: projectId, name: meta.projectName, overview: meta.projectOverview || '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    }
+  });
+}
+
+function getProjectsList() {
+  ensureProjectRegistry();
+  const byId = {};
+  Object.values(DB.projects || {}).forEach(project => {
+    if (!project?.id) return;
+    byId[project.id] = { ...project, features: [] };
+  });
+  Object.values(DB.features || {}).forEach(store => {
+    const pid = sanitizeProjectId(store?.meta?.projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+    if (!byId[pid]) byId[pid] = { id: pid, name: store?.meta?.projectName || DEFAULT_PROJECT_NAME, overview: store?.meta?.projectOverview || '', features: [] };
+    byId[pid].features.push(store?.meta?.id || '');
+  });
+  const list = Object.values(byId).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  if (!list.find(item => item.id === selectedProjectId)) selectedProjectId = list[0]?.id || DEFAULT_PROJECT_ID;
+  return list;
+}
+
+function getProjectFeatureStores(projectId) {
+  const pid = sanitizeProjectId(projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+  return Object.values(DB.features || {}).filter(store => sanitizeProjectId(store?.meta?.projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID) === pid);
+}
+
+function getProjectStats(projectId) {
+  const stores = getProjectFeatureStores(projectId);
+  let qa = 0, dev = 0, defects = 0, passed = 0, total = 0;
+  stores.forEach(store => {
+    const cases = (store.cases || []).filter(c => !getDeletedSet().has(c.id));
+    qa += cases.length;
+    dev += Array.isArray(store.devCases) ? store.devCases.length : 0;
+    defects += Array.isArray(store.defects) ? store.defects.length : 0;
+    total += cases.length;
+    cases.forEach(tc => { if (getStatus(tc.id) === 'passed') passed += 1; });
+  });
+  return { features: stores.length, qa, dev, defects, progress: total ? Math.round((passed / total) * 100) : 0, passed, total };
+}
+
+function setSelectedProject(projectId) {
+  selectedProjectId = sanitizeProjectId(projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+}
+
+function toggleProjectSidebar() {
+  isProjectSidebarCollapsed = !isProjectSidebarCollapsed;
+  localStorage.setItem(PROJECT_SIDEBAR_KEY, isProjectSidebarCollapsed ? '1' : '0');
+  if (currentFeatureId === 'projects') renderProjectsPage();
+}
+
+function openProjectCreateModal() {
+  if (!ensureWritable()) return;
+  openModal('add-project-modal', `
+    <div class="modal-header"><span class="modal-title">＋ Add Project</span><span class="modal-sub">สร้าง project ใหม่</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Project name</label><input class="form-input" id="pj-name" placeholder="เช่น Zeen Audit" /></div>
+      <div class="form-group"><label>Overview</label><textarea class="form-textarea" id="pj-overview" rows="5" placeholder="อธิบาย project โดยรวม"></textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn-modal-ok" onclick="submitCreateProject()">สร้าง Project</button>
+    </div>`);
+}
+
+async function submitCreateProject() {
+  const name = document.getElementById('pj-name').value.trim();
+  const overview = document.getElementById('pj-overview').value.trim();
+  if (!name) { showFormError('กรุณากรอกชื่อ Project'); return; }
+  ensureProjectRegistry();
+  const id = sanitizeProjectId(name, 'project-' + Date.now());
+  if (DB.projects[id]) { showFormError('Project นี้มีอยู่แล้ว'); return; }
+  DB.projects[id] = { id, name, overview, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  selectedProjectId = id;
+  await writeStatusFile();
+  closeModal();
+  syncAppView();
+  switchTab('projects');
+}
+
+function openEditProjectModal(projectId = selectedProjectId) {
+  if (!ensureWritable()) return;
+  ensureProjectRegistry();
+  const project = DB.projects[sanitizeProjectId(projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID)];
+  if (!project) return;
+  openModal('edit-project-modal', `
+    <div class="modal-header"><span class="modal-title">✏️ Edit Project</span><span class="modal-sub">${escapeHtml(project.id)}</span></div>
+    <div class="modal-body">
+      <div class="form-group"><label>Project name</label><input class="form-input" id="epj-name" value="${escapeHtml(project.name || '')}" /></div>
+      <div class="form-group"><label>Overview</label><textarea class="form-textarea" id="epj-overview" rows="6">${escapeHtml(project.overview || '')}</textarea></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn-modal-ok" onclick="submitEditProject('${project.id}')">บันทึก Project</button>
+    </div>`);
+}
+
+async function submitEditProject(projectId) {
+  ensureProjectRegistry();
+  const project = DB.projects[projectId];
+  if (!project) return;
+  project.name = document.getElementById('epj-name').value.trim() || project.name;
+  project.overview = document.getElementById('epj-overview').value.trim();
+  project.updatedAt = new Date().toISOString();
+  Object.values(DB.features || {}).forEach(store => {
+    if (sanitizeProjectId(store?.meta?.projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID) === projectId) {
+      store.meta.projectName = project.name;
+      store.meta.projectOverview = project.overview;
+      scheduleFeatureWrite(store.meta.id);
+    }
+  });
+  await writeStatusFile();
+  closeModal();
+  syncAppView();
+  switchTab('projects');
+}
+
+function renderProjectsPage() {
+  const projects = getProjectsList();
+  const project = projects.find(item => item.id === selectedProjectId) || projects[0];
+  if (project) selectedProjectId = project.id;
+  const stats = project ? getProjectStats(project.id) : { features: 0, qa: 0, dev: 0, defects: 0, progress: 0 };
+  const projectStores = project ? getProjectFeatureStores(project.id) : [];
+  const projectCards = projectStores.map(store => {
+    const feature = { meta: store.meta, cases: (store.cases || []).filter(c => !getDeletedSet().has(c.id)), devCases: store.devCases || [], defects: store.defects || [] };
+    const counts = getStatusCounts(feature.cases);
+    const passed = counts.passed || 0;
+    const total = feature.cases.length;
+    const progress = total ? Math.round((passed / total) * 100) : 0;
+    const tags = (feature.meta.tags || []).slice(0, 2).map(renderFeatureTag).join('');
+    return `
+      <div class="project-feature-card" onclick="switchTab('${feature.meta.id}')">
+        <div class="project-feature-main">
+          <div class="project-feature-icon" style="background:${feature.meta.colorBg};border-color:${feature.meta.colorBorder};">${feature.meta.emoji || '📋'}</div>
+          <div>
+            <div class="project-feature-title">${escapeHtml(feature.meta.name)}</div>
+            <div class="project-feature-desc">${escapeHtml(feature.meta.description || '')}</div>
+            <div class="project-feature-tags">${tags}</div>
+          </div>
+        </div>
+        <div class="project-feature-side">
+          <div class="project-feature-status"><span class="status-badge status-no-run">No Run ${counts['no-run'] || 0}</span><span class="status-badge status-passed">Passed ${passed}</span></div>
+          <div class="progress-line"><span style="width:${progress}%;"></span></div>
+          <div class="project-feature-count">${total} cases</div>
+        </div>
+      </div>`;
+  }).join('');
+  document.getElementById('main-content').innerHTML = `
+    <div class="projects-shell ${isProjectSidebarCollapsed ? 'collapsed' : ''}">
+      <aside class="projects-sidebar">
+        <div class="projects-sidebar-top">
+          <button class="sidebar-toggle-btn" onclick="toggleProjectSidebar()">☰</button>
+          <div class="projects-sidebar-title">Projects</div>
+        </div>
+        <button class="projects-add-btn" onclick="openProjectCreateModal()">＋ <span>Project</span></button>
+        <div class="projects-list">
+          ${projects.map(item => { const itemStats = getProjectStats(item.id); return `
+            <button class="project-list-item ${item.id === selectedProjectId ? 'active' : ''}" onclick="switchProjectView('${item.id}')" title="${escapeHtml(item.name)}">
+              <span class="project-dot"></span>
+              <span class="project-list-name">${escapeHtml(item.name)}</span>
+              <span class="project-list-count">${itemStats.qa}</span>
+            </button>`; }).join('')}
+        </div>
+      </aside>
+      <section class="projects-main">
+        ${project ? `
+          <div class="project-overview-card">
+            <div class="project-overview-main">
+              <div class="project-overview-emoji">🗂️</div>
+              <div>
+                <div class="project-overview-name">${escapeHtml(project.name)}</div>
+                <div class="project-overview-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div>
+                <div class="project-overview-pills">
+                  <span class="project-pill blue">${stats.features} Features</span>
+                  <span class="project-pill green">${stats.qa} QA Cases</span>
+                  <span class="project-pill purple">${stats.dev} Dev Cases</span>
+                  <span class="project-pill orange">${stats.defects} Defects</span>
+                </div>
+              </div>
+            </div>
+            <div class="project-overview-actions">
+              <button class="icon-btn icon-btn-neutral" onclick="openEditProjectModal('${project.id}')">✏️ แก้ไข Project</button>
+              <button class="btn-import-csv" onclick="openProjectImportModal('${project.id}')">📦 Project Sheet Import</button>
+              <button class="btn-add-case" onclick="openAddFeatureModal('${project.id}')">＋ Add Feature</button>
+            </div>
+          </div>
+          <div class="project-dashboard-card">
+            <div class="project-stat"><strong>${stats.features}</strong><span>Features</span></div>
+            <div class="project-stat"><strong>${stats.qa}</strong><span>QA Cases</span></div>
+            <div class="project-stat"><strong>${stats.dev}</strong><span>Dev Cases</span></div>
+            <div class="project-stat"><strong>${stats.defects}</strong><span>Defects</span></div>
+            <div class="project-progress-wrap"><label>Project QA progress</label><div class="progress-line full"><span style="width:${stats.progress}%;"></span></div></div>
+          </div>
+          <div class="section-sep"><span>Features in ${escapeHtml(project.name)}</span><span class="count-pill">${projectStores.length} features</span></div>
+          <div class="project-feature-list">${projectCards || `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี feature ใน project นี้</p></div>`}</div>
+        ` : `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี project — กด <strong>＋ Project</strong> เพื่อเริ่ม</p></div>`}
+      </section>
+    </div>`;
+}
+
+function switchProjectView(projectId) {
+  setSelectedProject(projectId);
+  currentFeatureId = 'projects';
+  renderProjectsPage();
+}
+
+function openProjectImportModal(projectId = selectedProjectId) {
+  if (!ensureWritable()) return;
+  openModal('project-import-modal', `
+    <div class="modal-header"><span class="modal-title">📦 Project Sheet Import</span><span class="modal-sub">CSV เดียวสร้าง feature และ test case ได้</span></div>
+    <div class="modal-body">
+      <div class="notice" style="margin-bottom:12px;">คอลัมน์ที่รองรับ: feature_id, feature_name, screen, case_id, type, title, sub, steps, expect</div>
+      <input type="file" id="project-import-file" accept=".csv" onchange="previewProjectImport('${projectId}')" />
+      <div id="project-import-preview" class="csv-preview" style="display:none;margin-top:12px;">
+        <div id="project-import-stats" class="csv-stats"></div>
+        <div id="project-import-content"></div>
+      </div>
+      <div id="project-import-error" class="form-error" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn-modal-ok" id="btn-project-import" onclick="submitProjectImport('${projectId}')" disabled>Import</button>
+    </div>`);
+}
+
+function previewProjectImport(projectId) {
+  const file = document.getElementById('project-import-file')?.files?.[0];
+  const errEl = document.getElementById('project-import-error');
+  if (!file) return;
+  errEl.style.display = 'none';
+  file.text().then(text => {
+    try {
+      _projectImportRows = parseProjectSheetCsv(text, projectId);
+      document.getElementById('project-import-preview').style.display = 'block';
+      document.getElementById('project-import-stats').textContent = `รวม ${_projectImportRows.length} แถว`;
+      document.getElementById('project-import-content').innerHTML = _projectImportRows.slice(0, 8).map(row => `<div style="padding:4px 0;border-bottom:1px solid var(--border);"><strong>${escapeHtml(row.featureId)}</strong> — ${escapeHtml(row.case.title)}</div>`).join('');
+      document.getElementById('btn-project-import').disabled = false;
+    } catch (err) {
+      errEl.textContent = buildErrorMessage(err);
+      errEl.style.display = 'block';
+      document.getElementById('btn-project-import').disabled = true;
+    }
+  });
+}
+
+function buildFeatureMetaFromImport(projectId, projectName, row, screenNames) {
+  const theme = THEME_COLORS.orange;
+  const screens = {};
+  screenNames.forEach((screenName, idx) => {
+    screens[`S${idx + 1}`] = { label: `Screen ${idx + 1}`, name: screenName, cssClass: `sc-${row.featureId}-s${idx + 1}` };
+  });
+  return { id: row.featureId, name: row.featureName || row.featureId, emoji: row.emoji || '📋', color: theme.color, colorBg: theme.colorBg, colorBorder: theme.colorBorder, tags: [{ label: projectName, style: 'badge-gray' }], description: row.featureName || row.featureId, screens, projectId, projectName, projectOverview: DB.projects?.[projectId]?.overview || '' };
+}
+
+function parseProjectSheetCsv(text, projectId) {
+  const rows = parseCsvText(text);
+  const header = rows.shift() || [];
+  const map = Object.fromEntries(header.map((key, idx) => [String(key || '').trim().toLowerCase(), idx]));
+  ['feature_id', 'feature_name', 'screen', 'case_id', 'type', 'title'].forEach(key => { if (!(key in map)) throw new Error(`ไม่พบคอลัมน์ ${key}`); });
+  return rows.filter(row => row.some(Boolean)).map(row => ({
+    projectId,
+    featureId: inferFeatureIdFromFilename(row[map['feature_id']] || ''),
+    featureName: row[map['feature_name']] || '',
+    emoji: map['feature_emoji'] != null ? row[map['feature_emoji']] : '',
+    screenName: row[map['screen']] || 'Main',
+    case: {
+      id: row[map['case_id']] || `TC-${Date.now()}`,
+      type: (row[map['type']] || 'positive').toLowerCase(),
+      title: row[map['title']] || '',
+      sub: map['sub'] != null ? (row[map['sub']] || '') : '',
+      steps: map['steps'] != null ? String(row[map['steps']] || '').split('|').map(v => v.trim()).filter(Boolean) : ['-'],
+      expect: map['expect'] != null ? String(row[map['expect']] || '').split('|').map(v => v.trim()).filter(Boolean) : ['-'],
+    },
+  }));
+}
+
+async function submitProjectImport(projectId) {
+  if (!_projectImportRows.length) return;
+  ensureProjectRegistry();
+  const project = DB.projects[projectId] || { id: projectId, name: DEFAULT_PROJECT_NAME, overview: '' };
+  const grouped = {};
+  _projectImportRows.forEach(row => {
+    if (!grouped[row.featureId]) grouped[row.featureId] = [];
+    grouped[row.featureId].push(row);
+  });
+  for (const [featureId, rows] of Object.entries(grouped)) {
+    let store = DB.features[featureId];
+    const uniqueScreens = [...new Set(rows.map(item => item.screenName).filter(Boolean))];
+    const screenMap = Object.fromEntries(uniqueScreens.map((name, idx) => [name, `S${idx + 1}`]));
+    if (!store) {
+      store = DB.features[featureId] = { meta: buildFeatureMetaFromImport(projectId, project.name, rows[0], uniqueScreens), cases: [], devCases: [], defects: [], fileId: null };
+    } else {
+      store.meta.projectId = projectId;
+      store.meta.projectName = project.name;
+      store.meta.projectOverview = project.overview || '';
+      store.meta.screens = {};
+      uniqueScreens.forEach((name, idx) => { store.meta.screens[`S${idx + 1}`] = { label: `Screen ${idx + 1}`, name, cssClass: `sc-${featureId}-s${idx + 1}` }; });
+    }
+    const byCase = Object.fromEntries((store.cases || []).map(item => [item.id, item]));
+    rows.forEach(row => {
+      byCase[row.case.id] = { ...(byCase[row.case.id] || {}), ...row.case, screen: screenMap[row.screenName] || 'S1' };
+    });
+    store.cases = Object.values(byCase);
+    await persistFeatureFile(featureId);
+  }
+  await writeStatusFile();
+  closeModal();
+  syncAppView();
+  switchTab('projects');
+}
+
+
 function getBundledFeatureTemplates() {
   const features = [];
   if (typeof XRAY_META !== 'undefined' && typeof XRAY_CASES !== 'undefined') {
@@ -615,22 +952,12 @@ function syncAppView() {
   FEATURES = buildFeatures();
   rebuildNav();
   updateHeaderStrip();
-  if (currentFeatureId === 'projects') {
-    const projectId = ensureCurrentProjectSelection();
-    currentFeatureId = projectId ? `project-overview:${projectId}` : 'overview';
-  }
   if (currentFeatureId === 'overview') {
     renderOverview();
     return;
   }
-  if (isProjectViewId(currentFeatureId)) {
-    currentProjectId = getProjectIdFromViewId(currentFeatureId);
-    renderProjectOverview(currentProjectId);
-    return;
-  }
   const feature = FEATURES.find(item => item.meta.id === currentFeatureId);
   if (feature) {
-    currentProjectId = getProjectMetaFromFeatureMeta(feature.meta).id;
     renderFeature(feature);
   } else {
     currentFeatureId = 'overview';
@@ -969,63 +1296,6 @@ const SCREEN_PALETTE=[
 function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
 
 let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all', expandedCaseId=null, activeFeatureTab='qa';
-let currentProjectId = '';
-
-
-function normalizeProjectId(value) {
-  return String(value || '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-_]/g, '') || 'general';
-}
-
-function getProjectMetaFromFeatureMeta(meta = {}) {
-  const projectId = normalizeProjectId(meta.projectId || meta.projectName || 'general');
-  return {
-    id: projectId,
-    name: String(meta.projectName || projectId || 'General').trim() || 'General',
-    overview: String(meta.projectOverview || '').trim(),
-  };
-}
-
-function getProjectCollection() {
-  const map = new Map();
-  Object.values(DB.features || {}).forEach(store => {
-    const meta = store?.meta || {};
-    const project = getProjectMetaFromFeatureMeta(meta);
-    if (!map.has(project.id)) map.set(project.id, { ...project, featureIds: [] });
-    const entry = map.get(project.id);
-    if (!entry.overview && project.overview) entry.overview = project.overview;
-    if (!entry.name && project.name) entry.name = project.name;
-    if (meta.id) entry.featureIds.push(meta.id);
-  });
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function getFeaturesByProjectId(projectId) {
-  return FEATURES.filter(feature => getProjectMetaFromFeatureMeta(feature.meta).id === projectId);
-}
-
-function isProjectViewId(id) {
-  return String(id || '').startsWith('project-overview:');
-}
-
-function getProjectIdFromViewId(id) {
-  return String(id || '').replace(/^project-overview:/, '');
-}
-
-function ensureCurrentProjectSelection() {
-  const projects = getProjectCollection();
-  if (currentProjectId && projects.some(project => project.id === currentProjectId)) return currentProjectId;
-  currentProjectId = projects[0]?.id || '';
-  return currentProjectId;
-}
-
-function getProjectSummary(projectId) {
-  const projectFeatures = getFeaturesByProjectId(projectId);
-  const allCases = projectFeatures.flatMap(feature => feature.cases || []);
-  const counts = getStatusCounts(allCases);
-  const devCount = projectFeatures.reduce((sum, feature) => sum + (feature.devCases || []).length, 0);
-  const defectCount = projectFeatures.reduce((sum, feature) => sum + (feature.defects || []).length, 0);
-  return { featureCount: projectFeatures.length, caseCount: allCases.length, devCount, defectCount, counts };
-}
 
 function buildFeatures() {
   const deleted = getDeletedSet();
@@ -1253,153 +1523,30 @@ function updateHeaderStrip(){
     `<span style="font-size:11px;color:var(--text3);margin-left:2px;">${ac.length} total</span>`;
 }
 
-
 function buildNavTabs(){
   const wrap=document.getElementById('nav-tabs');
   const total=FEATURES.reduce((s,f)=>s+f.cases.length,0);
-  const projects = getProjectCollection();
-  const projectId = ensureCurrentProjectSelection();
-  const projectFeatures = projectId ? getFeaturesByProjectId(projectId) : [];
-  const inProjectMode = currentFeatureId === 'projects' || isProjectViewId(currentFeatureId) || (!!projectId && projectFeatures.some(feature => feature.meta.id === currentFeatureId));
-
+  const projectCount=getProjectsList().length;
   wrap.innerHTML=`
-    <div class="nav-tab-row nav-tab-row-primary">
-      <button class="nav-tab${currentFeatureId==='overview'?' active':''}" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>
-      <button class="nav-tab${inProjectMode?' active':''}" id="tab-projects" onclick="switchTab('projects')">🗂 Projects <span class="tab-count">${projects.length}</span></button>
-    </div>
-    ${inProjectMode ? `
-      <div class="nav-tab-row nav-tab-row-secondary">
-        ${projects.map(project => {
-          const summary = getProjectSummary(project.id);
-          return `<button class="nav-tab nav-tab-project${project.id===projectId?' active':''}" onclick="switchTab('project-overview:${project.id}')">${escapeHtml(project.name)} <span class="tab-count">${summary.featureCount}</span></button>`;
-        }).join('')}
-      </div>
-      ${projectId ? `
-        <div class="nav-tab-row nav-tab-row-tertiary">
-          <button class="nav-tab${currentFeatureId===`project-overview:${projectId}`?' active':''}" onclick="switchTab('project-overview:${projectId}')">📝 Project Overview</button>
-          ${projectFeatures.map(feature => `<button class="nav-tab${currentFeatureId===feature.meta.id?' active':''}" id="tab-${feature.meta.id}" onclick="switchTab('${feature.meta.id}')">${feature.meta.emoji} ${escapeHtml(feature.meta.name)} <span class="tab-count">${feature.cases.length}</span></button>`).join('')}
-          <button class="nav-tab nav-tab-add" id="tab-add-feature" onclick="openAddFeatureModal('${projectId}')" style="color:var(--orange);">＋ Feature</button>
-        </div>` : ''}
-    ` : ''}`;
+    <button class="nav-tab${currentFeatureId==='overview'?' active':''}" id="tab-overview" onclick="switchTab('overview')">📋 Overview <span class="tab-count">${total}</span></button>
+    <button class="nav-tab${currentFeatureId==='projects'?' active':''}" id="tab-projects" onclick="switchTab('projects')">🗂️ Projects <span class="tab-count">${projectCount}</span></button>`;
 }
 function rebuildNav(){
-  FEATURES=buildFeatures();buildNavTabs();
+  FEATURES=buildFeatures();
+  buildNavTabs();
 }
 function switchTab(id){
-  currentFeatureId=id;activeType=activeScreen=activeStatusFilt='all';
-  if(id==='overview') {
-    activeFeatureTab = 'qa';
-    rebuildNav();
-    renderOverview();
-    return;
-  }
-  if(id==='projects') {
-    const projectId = ensureCurrentProjectSelection();
-    currentFeatureId = projectId ? `project-overview:${projectId}` : 'overview';
-    rebuildNav();
-    if (projectId) renderProjectOverview(projectId); else renderOverview();
-    return;
-  }
-  if(isProjectViewId(id)) {
-    currentProjectId = getProjectIdFromViewId(id);
-    activeFeatureTab = 'qa';
-    rebuildNav();
-    renderProjectOverview(currentProjectId);
-    return;
-  }
-  const feature = FEATURES.find(f=>f.meta.id===id);
-  if(feature){
-    currentProjectId = getProjectMetaFromFeatureMeta(feature.meta).id;
-    rebuildNav();
-    renderFeature(feature);
-  }
-}
-
-
-function renderProjectOverview(projectId){
-  FEATURES = buildFeatures();
-  const project = getProjectCollection().find(item => item.id === projectId);
-  if (!project) {
-    document.getElementById('main-content').innerHTML = `<div class="empty-state"><div class="emoji">🗂</div><p>ยังไม่มี Project</p></div>`;
-    return;
-  }
-  const projectFeatures = getFeaturesByProjectId(projectId);
-  const summary = getProjectSummary(projectId);
-  const counts = summary.counts;
-  document.getElementById('main-content').innerHTML = `
-    <div class="feature-header project-header-card">
-      <div style="font-size:24px;">🗂</div>
-      <div class="feature-info" style="flex:1;">
-        <div class="feature-name">${escapeHtml(project.name)}</div>
-        <div class="feature-desc">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div>
-        <div class="feature-tags">
-          <span class="badge badge-blue">${summary.featureCount} Features</span>
-          <span class="badge badge-green">${summary.caseCount} QA Cases</span>
-          <span class="badge badge-purple">${summary.devCount} Dev Cases</span>
-          <span class="badge badge-orange">${summary.defectCount} Defects</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
-        <button class="icon-btn icon-btn-neutral" onclick="openEditProjectModal('${project.id}')">✏️ แก้ไข Project</button>
-        <button class="btn-add-case" onclick="openAddFeatureModal('${project.id}')">＋ Add Feature</button>
-      </div>
-    </div>
-    <div class="ov-summary-bar project-summary-bar">
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--blue);">${summary.featureCount}</span><span class="ov-summary-lbl">Features</span></div>
-      <div class="ov-divider"></div>
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--green);">${summary.caseCount}</span><span class="ov-summary-lbl">QA Cases</span></div>
-      <div class="ov-divider"></div>
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--purple);">${summary.devCount}</span><span class="ov-summary-lbl">Dev Cases</span></div>
-      <div class="ov-divider"></div>
-      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--orange);">${summary.defectCount}</span><span class="ov-summary-lbl">Defects</span></div>
-      <div class="ov-divider"></div>
-      <div class="ov-progress-wrap"><div class="ov-progress-label">Project QA progress</div>
-        <div class="ov-progress-bar">${buildProgressBar(counts, summary.caseCount, 'ov-pb-seg')}</div>
-      </div>
-    </div>
-    <div class="section-sep"><span>Features in ${escapeHtml(project.name)}</span><span class="count-pill">${summary.featureCount} features</span></div>
-    <div class="ov-list">${projectFeatures.length ? projectFeatures.map(buildFeatureRow).join('') : `<div class="empty-state"><div class="emoji">📂</div><p>ยังไม่มี Feature ใน Project นี้</p></div>`}</div>`;
-}
-
-function openEditProjectModal(projectId){
-  const project = getProjectCollection().find(item => item.id === projectId);
-  if (!project) return;
-  openModal('edit-project-modal', `
-    <div class="modal-header"><span class="modal-title">✏️ Edit Project</span><span class="modal-sub">${escapeHtml(project.id)}</span></div>
-    <div class="modal-body">
-      <div class="form-group"><label>Project ID</label><input class="form-input" id="ep-project-id" value="${escapeHtml(project.id)}" readonly /></div>
-      <div class="form-group"><label>Project name</label><input class="form-input" id="ep-project-name" value="${escapeHtml(project.name)}" /></div>
-      <div class="form-group"><label>Project overview</label><textarea class="form-textarea" id="ep-project-overview" rows="6">${escapeHtml(project.overview || '')}</textarea></div>
-      <div class="form-hint">การแก้ไขจะอัปเดตทุก Feature ภายใต้ Project นี้</div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
-      <button class="btn-modal-ok" onclick="submitEditProject('${project.id}')">บันทึก Project</button>
-    </div>`);
-}
-
-async function submitEditProject(projectId){
-  const nextName = document.getElementById('ep-project-name').value.trim();
-  const nextOverview = document.getElementById('ep-project-overview').value.trim();
-  if (!nextName) { showFormError('กรุณากรอก Project name'); return; }
-  const featureIds = Object.values(DB.features || {}).filter(entry => getProjectMetaFromFeatureMeta(entry.meta).id === projectId).map(entry => entry.meta.id);
-  if (!featureIds.length) { showFormError('ไม่พบ Feature ใน Project นี้'); return; }
-  const okBtn = document.querySelector('.btn-modal-ok');
-  if(okBtn){ okBtn.disabled = true; okBtn.textContent = 'กำลังบันทึก...'; }
-  try {
-    for (const featureId of featureIds) {
-      DB.features[featureId].meta.projectId = projectId;
-      DB.features[featureId].meta.projectName = nextName;
-      DB.features[featureId].meta.projectOverview = nextOverview;
-      await writeFeatureFile(featureId);
-    }
-    closeModal();
-    FEATURES = buildFeatures();
-    rebuildNav();
-    renderProjectOverview(projectId);
-  } catch (err) {
-    showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
-    if(okBtn){ okBtn.disabled = false; okBtn.textContent = 'บันทึก Project'; }
+  currentFeatureId=id; expandedCaseId=null; activeType='all'; activeScreen='all'; activeStatusFilt='all';
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  if(id==='overview') document.getElementById('tab-overview')?.classList.add('active');
+  if(id==='projects') document.getElementById('tab-projects')?.classList.add('active');
+  if(id==='overview'){ renderOverview(); return; }
+  if(id==='projects'){ setSelectedProject(selectedProjectId); renderProjectsPage(); return; }
+  const f=FEATURES.find(f=>f.meta.id===id);
+  if(f){
+    selectedProjectId = sanitizeProjectId(f.meta.projectId || selectedProjectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID);
+    document.getElementById('tab-projects')?.classList.add('active');
+    renderFeature(f);
   }
 }
 
@@ -1414,16 +1561,18 @@ function renderOverview(){
       <div class="ov-divider"></div>
       <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--text2);">${FEATURES.length}</span><span class="ov-summary-lbl">Features</span></div>
       <div class="ov-divider"></div>
+      <div class="ov-summary-item"><span class="ov-summary-num" style="color:var(--orange);">${getProjectsList().length}</span><span class="ov-summary-lbl">Projects</span></div>
+      <div class="ov-divider"></div>
       ${STATUSES.map(s=>`<div class="ov-summary-item"><span class="ov-summary-num" style="color:${statNums[s.key]};">${counts[s.key]}</span><span class="ov-summary-lbl">${s.label}</span></div>`).join('')}
       <div class="ov-divider"></div>
       <div class="ov-progress-wrap"><div class="ov-progress-label">Overall progress</div>
         <div class="ov-progress-bar" id="ov-global-progress">${buildProgressBar(counts,total,'ov-pb-seg')}</div>
       </div>
     </div>
-    <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <div class="feature-tags"><span class="badge badge-blue">${getProjectCollection().length} Projects</span></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       <button class="btn-import-csv" onclick="openBulkImportModal()">📦 Bulk CSV</button>
     </div>
+    <div class="list-toolbar list-toolbar-single" style="margin-top:0;margin-bottom:14px;"><div class="list-toolbar-item list-toolbar-actions"><button class="icon-btn icon-btn-neutral" onclick="switchTab('projects')">🗂️ เปิดหน้า Projects</button></div></div>
     <div class="section-sep"><span>Features</span><span class="count-pill">${FEATURES.length} features · ${total} cases</span></div>
     <div class="ov-list" id="ov-list">
       ${FEATURES.length===0
@@ -1434,7 +1583,6 @@ function renderOverview(){
 
 function buildFeatureRow(f){
   const counts=getStatusCounts(f.cases),total=f.cases.length;
-  const project = getProjectMetaFromFeatureMeta(f.meta);
   const tags=(f.meta.tags||[]).map(renderFeatureTag).join('');
   const mini=STATUSES.filter(s=>counts[s.key]>0).map(s=>
     `<span class="ov-mini-stat" style="background:${STATUS_COLORS[s.key]}22;color:var(--st-${s.key});border-color:${STATUS_COLORS[s.key]};">${s.icon} ${s.label} ${counts[s.key]}</span>`
@@ -1444,7 +1592,7 @@ function buildFeatureRow(f){
     <div class="ov-feature-info"><div class="ov-feature-name">${f.meta.name}
       <button class="icon-btn icon-btn-danger" onclick="event.stopPropagation();confirmDeleteFeature('${f.meta.id}')" title="ลบ feature">🗑</button>
     </div>
-      <div class="ov-feature-desc">${f.meta.description}</div><div class="ov-feature-tags"><span class="badge badge-gray">${escapeHtml(project.name)}</span>${tags}</div></div>
+      <div class="ov-feature-desc">${f.meta.description}</div><div class="ov-feature-tags">${tags}</div></div>
     <div class="ov-feature-stats" id="ov-row-stats-${f.meta.id}">
       <div class="ov-stat-row">${mini}</div>
       <div class="ov-progress-track" style="width:180px;">${buildProgressBar(counts,total,'ov-pt-seg')}</div>
@@ -1468,7 +1616,6 @@ function refreshFeatureRowStats(fid){
 // ── FEATURE VIEW ───────────────────────────
 function renderFeature(feature){
   const { meta, cases } = feature;
-  const project = getProjectMetaFromFeatureMeta(meta);
   const tags = (meta.tags || []).map(renderFeatureTag).join('');
   const screenOptionHtml = [`<option value="all">All screens</option>`]
     .concat(Object.entries(meta.screens).map(([k, sc]) => `<option value="${k}"${activeScreen===k?' selected':''}>${escapeHtml(sc.label)} – ${escapeHtml(sc.name)}</option>`))
@@ -1479,7 +1626,7 @@ function renderFeature(feature){
   document.getElementById('main-content').innerHTML=`
     <div class="feature-header">
       <div style="font-size:24px;">${meta.emoji}</div>
-      <div class="feature-info" style="flex:1;"><div class="feature-breadcrumb"><button class="link-chip" onclick="switchTab('project-overview:${project.id}')">🗂 ${escapeHtml(project.name)}</button></div><div class="feature-name">${meta.name}</div>
+      <div class="feature-info" style="flex:1;"><div class="feature-name">${meta.name}</div>
         <div class="feature-desc">${meta.description}</div><div class="feature-tags">${tags}</div></div>
       <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
         <button class="icon-btn icon-btn-neutral" onclick="openEditFeatureModal('${meta.id}')">✏️ แก้ไข Feature</button>
@@ -1597,11 +1744,7 @@ function renderDevCasesTab(feature){
     </div>`;
 }
 
-
 function renderDevCaseCard(featureId, item, idx){
-  const feature = FEATURES.find(entry => entry.meta.id === featureId);
-  const qaCases = feature?.cases || [];
-  const linked = new Set(Array.isArray(item.linkedQaCaseIds) ? item.linkedQaCaseIds : []);
   return `
     <div class="workspace-card">
       <div class="workspace-card-head"><strong>DEV-${idx+1}</strong><button class="icon-btn icon-btn-danger icon-btn-compact" onclick="removeDevCase('${featureId}','${item.id}')">🗑</button></div>
@@ -1621,16 +1764,8 @@ function renderDevCaseCard(featureId, item, idx){
         </div>
       </div>
       <div class="workspace-grid">
-        <div class="form-group"><label>Note</label><textarea class="form-textarea" onchange="updateDevCaseField('${featureId}','${item.id}','note',this.value)">${escapeHtml(item.note || '')}</textarea></div>
-        <div class="form-group"><label>Linked QA Cases</label>
-          <div class="multi-select-list">
-            ${qaCases.length ? qaCases.map(tc => `
-              <label class="multi-select-option">
-                <input type="checkbox" ${linked.has(tc.id) ? 'checked' : ''} onchange="toggleDevCaseQaLink('${featureId}','${item.id}','${tc.id}', this.checked)">
-                <span><strong>${escapeHtml(tc.id)}</strong> — ${escapeHtml(tc.title)}</span>
-              </label>`).join('') : `<div class="workspace-empty-inline">ยังไม่มี QA case ใน feature นี้</div>`}
-          </div>
-        </div>
+        <div class="form-group"><label>Scenario</label><textarea class="form-textarea" onchange="updateDevCaseField('${featureId}','${item.id}','scenario',this.value)">${escapeHtml(item.scenario || '')}</textarea></div>
+        <div class="form-group"><label>Steps / Note</label><textarea class="form-textarea" onchange="updateDevCaseField('${featureId}','${item.id}','note',this.value)">${escapeHtml(item.note || '')}</textarea></div>
       </div>
     </div>`;
 }
@@ -1770,7 +1905,7 @@ function rerenderCurrentFeature(){
 function addDevCase(featureId){
   if (!ensureWritable()) return;
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
-  const devCase = { id: makeWorkspaceId('DEV'), title:'', owner:'', testType:'manual', status:'draft', note:'', linkedQaCaseIds:[] };
+  const devCase = { id: makeWorkspaceId('DEV'), title:'', owner:'', testType:'manual', status:'draft', scenario:'', note:'' };
   touchWorkspaceRecord(devCase);
   store.devCases.unshift(devCase);
   scheduleFeatureWrite(featureId);
@@ -1781,20 +1916,8 @@ function updateDevCaseField(featureId, itemId, key, value){
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
   const item = store.devCases.find(entry => entry.id === itemId); if (!item) return;
   item[key] = value;
-  if (!Array.isArray(item.linkedQaCaseIds)) item.linkedQaCaseIds = [];
   touchWorkspaceRecord(item);
   scheduleFeatureWrite(featureId);
-}
-
-function toggleDevCaseQaLink(featureId, itemId, testCaseId, checked){
-  const store = normalizeWorkspaceCollections(featureId); if (!store) return;
-  const item = store.devCases.find(entry => entry.id === itemId); if (!item) return;
-  const linked = new Set(Array.isArray(item.linkedQaCaseIds) ? item.linkedQaCaseIds : []);
-  if (checked) linked.add(testCaseId); else linked.delete(testCaseId);
-  item.linkedQaCaseIds = Array.from(linked);
-  touchWorkspaceRecord(item);
-  scheduleFeatureWrite(featureId);
-  rerenderCurrentFeature();
 }
 
 function removeDevCase(featureId, itemId){
@@ -2304,7 +2427,7 @@ function openImportCsvModal(featureId) {
         <strong>รูปแบบ CSV (UTF-8 with BOM):</strong><br>
         คอลัมน์: <code>id, type, screen, title, sub, steps, expect</code><br>
         • <b>type</b>: positive / edge / negative<br>
-        • <b>screen</b>: ใส่ได้ทั้ง key เดิม (S1, S2) หรือชื่อ screen ตามที่ทีมใช้จริง ระบบจะสร้าง Screen ID ให้เองถ้ายังไม่มี<br>
+        • <b>screen</b>: key จาก screens เช่น S1, S2<br>
         • <b>steps</b> และ <b>expect</b>: คั่นหลายบรรทัดด้วย <code> | </code>
       </div>
       <div class="form-group">
@@ -2330,77 +2453,43 @@ function openImportCsvModal(featureId) {
   });
 }
 
-
 let _csvParsed = [];
 let _bulkCsvParsed = [];
-function getNextScreenKey(screens) {
-  const keys = Object.keys(screens || {});
-  const nums = keys.map(key => Number(String(key).replace(/^S/i, ''))).filter(num => Number.isFinite(num));
-  const next = nums.length ? Math.max(...nums) + 1 : 1;
-  return `S${next}`;
-}
-
-function buildImportedScreenMap(featureId, screens, rawValue) {
-  const raw = String(rawValue || '').trim();
-  const fallbackKey = Object.keys(screens || {})[0] || 'S1';
-  if (!raw) return { key: fallbackKey, screens };
-  const exactKey = Object.keys(screens || {}).find(key => key.toLowerCase() === raw.toLowerCase());
-  if (exactKey) return { key: exactKey, screens };
-  const byName = Object.entries(screens || {}).find(([, screen]) => String(screen?.name || '').trim().toLowerCase() === raw.toLowerCase());
-  if (byName) return { key: byName[0], screens };
-  const nextKey = getNextScreenKey(screens);
-  const num = Number(String(nextKey).replace(/^S/i, '')) || Object.keys(screens || {}).length + 1;
-  const style = getScreenStyle(num - 1);
-  screens[nextKey] = {
-    label: `Screen ${num}`,
-    name: raw,
-    cssClass: `sc-${featureId || 'feature'}-s${num}`,
-    tone: '',
-    color: style.color,
-    bg: style.bg,
-    border: style.border,
-  };
-  return { key: nextKey, screens };
-}
-
-function parseCasesFromCsvText(text, featureId = '') {
+function parseCasesFromCsvText(text) {
   const rows = parseCsvText(text);
   if (rows.length < 2) throw new Error('ไฟล์ CSV ว่าง หรือไม่มีข้อมูล');
   const headers = rows[0].map(h => h.trim().toLowerCase());
   const required = ['id','type','title'];
   const missing = required.filter(h => !headers.includes(h));
   if (missing.length) throw new Error(`ไม่พบคอลัมน์: ${missing.join(', ')}`);
-  const baseScreens = cloneJson(DB.features[featureId]?.meta?.screens || {});
-  const cases = rows.slice(1).filter(r => r.some(v => v.trim())).map(row => {
+
+  return rows.slice(1).filter(r => r.some(v => v.trim())).map(row => {
     const obj = {};
     headers.forEach((h, i) => obj[h] = (row[i] || '').trim());
-    const screenInfo = buildImportedScreenMap(featureId, baseScreens, obj.screen || '');
     return {
-      id: obj.id, type: obj.type||'positive', screen: screenInfo.key,
+      id: obj.id, type: obj.type||'positive', screen: obj.screen||'S1',
       title: obj.title, sub: obj.sub||'',
       steps: obj.steps ? obj.steps.split('|').map(s=>s.trim()).filter(Boolean) : [],
       expect: obj.expect ? obj.expect.split('|').map(s=>s.trim()).filter(Boolean) : [],
       images: [],
     };
   }).filter(c => c.id && c.title);
-  return { cases, nextScreens: baseScreens };
 }
 
 function parseCsvPreview(text, featureId) {
-
   const errEl = document.getElementById('csv-error');
   errEl.style.display = 'none';
   try {
-    _csvParsed = parseCasesFromCsvText(text, featureId);
+    _csvParsed = parseCasesFromCsvText(text);
 
     const preview = document.getElementById('csv-preview');
     const content = document.getElementById('csv-preview-content');
     const stats   = document.getElementById('csv-stats');
     preview.style.display = 'block';
-    content.innerHTML = _csvParsed.cases.slice(0,10).map(c =>
+    content.innerHTML = _csvParsed.slice(0,10).map(c =>
       `<div style="padding:4px 0;border-bottom:1px solid var(--border);"><strong>${c.id}</strong> — ${c.title} <span style="color:var(--text3);">(${c.type})</span></div>`
     ).join('');
-    stats.textContent = `รวม ${_csvParsed.cases.length} test cases จะถูก import · ระบบจะสร้าง Screen ID ให้เองถ้ายังไม่มี`;
+    stats.textContent = `รวม ${_csvParsed.length} test cases จะถูก import`;
     document.getElementById('btn-do-import').disabled = false;
   } catch (err) {
     errEl.textContent = err.message; errEl.style.display = 'block';
@@ -2441,14 +2530,11 @@ function inferFeatureIdFromFilename(name) {
     .replace(/\s+/g, '-');
 }
 
-function mergeImportedCases(featureId, parsedPayload, mode = 'merge') {
+function mergeImportedCases(featureId, cases, mode = 'merge') {
   const f = DB.features[featureId];
-  const cases = Array.isArray(parsedPayload?.cases) ? parsedPayload.cases : [];
-  const nextScreens = parsedPayload?.nextScreens || null;
   if (!f) throw new Error(`ไม่พบ feature: ${featureId}`);
 
   const existingMap = new Map(f.cases.map(c => [c.id, c]));
-  if (nextScreens && Object.keys(nextScreens).length) f.meta.screens = nextScreens;
   let added = 0;
   let updated = 0;
 
@@ -2478,7 +2564,7 @@ function mergeImportedCases(featureId, parsedPayload, mode = 'merge') {
 }
 
 async function submitImportCsv(featureId) {
-  if (!_csvParsed?.cases?.length) return;
+  if (!_csvParsed.length) return;
   const btn = document.getElementById('btn-do-import');
   btn.disabled = true; btn.textContent = 'กำลัง import...';
   try {
@@ -2552,8 +2638,8 @@ async function parseBulkCsvFiles(files) {
     try {
       if (!DB.features[featureId]) throw new Error(`ไม่พบ featureId "${featureId}" จากชื่อไฟล์`);
       const text = await file.text();
-      const parsed = parseCasesFromCsvText(text, featureId);
-      _bulkCsvParsed.push({ fileName: file.name, featureId, ...parsed, error: '' });
+      const cases = parseCasesFromCsvText(text);
+      _bulkCsvParsed.push({ fileName: file.name, featureId, cases, error: '' });
     } catch (err) {
       _bulkCsvParsed.push({ fileName: file.name, featureId, cases: [], error: err.message });
     }
@@ -2564,7 +2650,7 @@ async function parseBulkCsvFiles(files) {
     <div style="padding:8px 0;border-bottom:1px solid var(--border);">
       <div><strong>${item.fileName}</strong> → <code>${item.featureId}</code></div>
       <div style="color:${item.error ? 'var(--red)' : 'var(--text2)'};margin-top:2px;">
-        ${item.error || `พร้อม import ${item.cases.length} cases · auto screen id`}
+        ${item.error || `พร้อม import ${item.cases.length} cases`}
       </div>
     </div>`).join('');
 
@@ -2587,7 +2673,7 @@ async function submitBulkImport() {
   try {
     const results = [];
     for (const item of validImports) {
-      const result = mergeImportedCases(item.featureId, item, mode);
+      const result = mergeImportedCases(item.featureId, item.cases, mode);
       await writeFeatureFile(item.featureId);
       results.push({ featureId: item.featureId, ...result });
     }
@@ -2797,11 +2883,6 @@ function openEditFeatureModal(featureId){
       </div>
       <div class="form-group"><label>Feature name</label><input class="form-input" id="ef-name" value="${escapeHtml(meta.name || '')}" /></div>
       <div class="form-group"><label>Description</label><input class="form-input" id="ef-desc" value="${escapeHtml(meta.description || '')}" /></div>
-      <div class="form-row2">
-        <div class="form-group"><label>Project ID</label><input class="form-input" id="ef-project-id" value="${escapeHtml(meta.projectId || '')}" placeholder="เช่น customer-portal" /></div>
-        <div class="form-group"><label>Project name</label><input class="form-input" id="ef-project-name" value="${escapeHtml(meta.projectName || '')}" placeholder="เช่น Customer Portal" /></div>
-      </div>
-      <div class="form-group"><label>Project overview</label><textarea class="form-textarea" id="ef-project-overview" rows="4">${escapeHtml(meta.projectOverview || '')}</textarea></div>
       <div class="form-group"><label>Color theme</label><select class="form-select" id="ef-color">
         <option value="orange"${themeKey==='orange'?' selected':''}>🟠 Orange</option>
         <option value="blue"${themeKey==='blue'?' selected':''}>🔵 Blue</option>
@@ -2831,9 +2912,6 @@ async function submitEditFeature(featureId){
   const name=document.getElementById('ef-name').value.trim();
   const desc=document.getElementById('ef-desc').value.trim();
   const theme=document.getElementById('ef-color').value;
-  const projectId = normalizeProjectId(document.getElementById('ef-project-id').value || current.meta?.projectId || 'general');
-  const projectName = document.getElementById('ef-project-name').value.trim() || projectId;
-  const projectOverview = document.getElementById('ef-project-overview').value.trim();
   const screenInputs=document.getElementById('ef-screens').value.split('\n').map(parseScreenLineInput).filter(item=>item.name);
   const tags=parseFeatureTagsInput(document.getElementById('ef-tags').value, (THEME_COLORS[theme]||THEME_COLORS.orange).badge);
   if(!name||!screenInputs.length){showFormError('กรุณากรอก Name และ Screens');return;}
@@ -2862,9 +2940,6 @@ async function submitEditFeature(featureId){
     colorBorder: th.colorBorder,
     tags: tags.length ? tags : current.meta.tags,
     screens,
-    projectId,
-    projectName,
-    projectOverview,
   };
 
   const okBtn=document.querySelector('.btn-modal-ok');
@@ -2889,7 +2964,7 @@ async function submitEditFeature(featureId){
 // ══════════════════════════════════════════
 //  ADD FEATURE MODAL
 // ══════════════════════════════════════════
-function openAddFeatureModal(defaultProjectId = ''){
+function openAddFeatureModal(){
   if (!ensureWritable()) return;
   openModal('add-feature-modal',`
     <div class="modal-header"><span class="modal-title">＋ Add Feature</span><span class="modal-sub">สร้าง feature ใหม่</span></div>
@@ -2900,11 +2975,6 @@ function openAddFeatureModal(defaultProjectId = ''){
       </div>
       <div class="form-group"><label>Feature name</label><input class="form-input" id="ff-name" placeholder="เช่น Checkout Flow" /></div>
       <div class="form-group"><label>Description</label><input class="form-input" id="ff-desc" placeholder="อธิบาย feature นี้" /></div>
-      <div class="form-row2">
-        <div class="form-group"><label>Project ID</label><input class="form-input" id="ff-project-id" value="${escapeHtml(defaultProjectId || currentProjectId || '')}" placeholder="เช่น customer-portal" /></div>
-        <div class="form-group"><label>Project name</label><input class="form-input" id="ff-project-name" placeholder="เช่น Customer Portal" /></div>
-      </div>
-      <div class="form-group"><label>Project overview</label><textarea class="form-textarea" id="ff-project-overview" rows="4" placeholder="สรุป overview ของ project นี้"></textarea></div>
       <div class="form-group"><label>Color theme</label><select class="form-select" id="ff-color">
         <option value="orange">🟠 Orange</option><option value="blue">🔵 Blue</option><option value="green">🟢 Green</option>
         <option value="purple">🟣 Purple</option><option value="teal">🩵 Teal</option><option value="amber">🟡 Amber</option>
@@ -2927,9 +2997,6 @@ async function submitAddFeature(){
   const name=document.getElementById('ff-name').value.trim();
   const desc=document.getElementById('ff-desc').value.trim();
   const theme=document.getElementById('ff-color').value;
-  const projectId = normalizeProjectId(document.getElementById('ff-project-id').value || currentProjectId || 'general');
-  const projectName = document.getElementById('ff-project-name').value.trim() || projectId;
-  const projectOverview = document.getElementById('ff-project-overview').value.trim();
   const screenInputs=document.getElementById('ff-screens').value.split('\n').map(parseScreenLineInput).filter(item=>item.name);
   const tags=parseFeatureTagsInput(document.getElementById('ff-tags').value, (THEME_COLORS[theme]||THEME_COLORS.orange).badge);
   if(!id||!name||!screenInputs.length){showFormError('กรุณากรอก ID, Name และ Screens');return;}
@@ -2949,12 +3016,11 @@ async function submitAddFeature(){
     };
   });
   const meta={id,name,emoji,color:th.color,colorBg:th.colorBg,colorBorder:th.colorBorder,
-    tags:tags.length?tags:[{label:'Journey',style:th.badge}],description:desc||name,screens,projectId,projectName,projectOverview};
+    tags:tags.length?tags:[{label:'Journey',style:th.badge}],description:desc||name,screens};
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังสร้าง...';}
   try{
     await saveNewFeature(meta);
-    currentProjectId = projectId;
     FEATURES=buildFeatures();injectScreenStyles();closeModal();rebuildNav();switchTab(id);updateHeaderStrip();
   }catch(err){
     showFormError(`สร้างไม่สำเร็จ: ${err.message}`);
