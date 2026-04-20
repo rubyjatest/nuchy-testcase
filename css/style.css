@@ -1270,3 +1270,35 @@ body {
 .inline-link-list li a {
   word-break: break-word;
 }
+
+
+.nav-tabs {
+  display: grid;
+  gap: 0;
+}
+.nav-tab-row {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.nav-tab-row::-webkit-scrollbar { display: none; }
+.nav-tab-row-secondary,
+.nav-tab-row-tertiary { border-top: 1px solid var(--border); }
+.nav-tab-project.active { color: var(--blue); border-bottom-color: var(--blue); }
+.project-header-card { margin-bottom: 1rem; }
+.project-summary-bar { margin-bottom: 1rem; }
+.feature-breadcrumb { margin-bottom: 6px; }
+.link-chip {
+  border: 1px solid var(--blue-border);
+  background: var(--blue-bg);
+  color: var(--blue);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.link-chip:hover { opacity: 0.92; }
