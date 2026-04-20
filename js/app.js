@@ -138,10 +138,10 @@ function buildScreenStyleFromToken(colorToken) {
   return null;
 }
 
-const DEFAULT_PROJECT_ID = 'mobile-app';
-const DEFAULT_PROJECT_NAME = 'Mobile App';
+const DEFAULT_PROJECT_ID = 'project-default';
+const DEFAULT_PROJECT_NAME = 'Project';
 const PROJECT_SIDEBAR_KEY = 'qa-project-sidebar-open';
-let selectedProjectId = DEFAULT_PROJECT_ID;
+let selectedProjectId = ''; // set from available projects
 let isProjectSidebarOpen = localStorage.getItem(PROJECT_SIDEBAR_KEY) === '1';
 let _projectImportRows = [];
 
@@ -152,9 +152,16 @@ function sanitizeProjectId(value, fallback = '') {
 
 function ensureProjectRegistry() {
   if (!isPlainObject(DB.projects)) DB.projects = {};
-  if (!DB.projects[DEFAULT_PROJECT_ID]) {
-    DB.projects[DEFAULT_PROJECT_ID] = { id: DEFAULT_PROJECT_ID, name: DEFAULT_PROJECT_NAME, overview: 'ภาพรวมของโปรเจกต์', iconEmoji: '📱', iconImage: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+
+  // clean legacy placeholder project if it no longer has features
+  const legacyMobileProject = DB.projects['mobile-app'];
+  if (legacyMobileProject) {
+    const hasLegacyFeatures = Object.values(DB.features || {}).some(store =>
+      sanitizeProjectId(store?.meta?.projectId || store?.meta?.projectName || '', '') === 'mobile-app'
+    );
+    if (!hasLegacyFeatures) delete DB.projects['mobile-app'];
   }
+
   Object.values(DB.features || {}).forEach(store => {
     if (!store?.meta) return;
     const meta = store.meta;
@@ -163,7 +170,15 @@ function ensureProjectRegistry() {
     meta.projectName = meta.projectName || DB.projects[projectId]?.name || DEFAULT_PROJECT_NAME;
     meta.projectOverview = meta.projectOverview || DB.projects[projectId]?.overview || '';
     if (!DB.projects[projectId]) {
-      DB.projects[projectId] = { id: projectId, name: meta.projectName, overview: meta.projectOverview || '', iconEmoji: '🗂️', iconImage: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+      DB.projects[projectId] = {
+        id: projectId,
+        name: meta.projectName,
+        overview: meta.projectOverview || '',
+        iconEmoji: '🗂️',
+        iconImage: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
     }
   });
 }
@@ -181,8 +196,8 @@ function getProjectsList() {
     byId[pid].features.push(store?.meta?.id || '');
   });
   const list = Object.values(byId).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
-  if (!list.find(item => item.id === selectedProjectId)) selectedProjectId = list[0]?.id || DEFAULT_PROJECT_ID;
-  return list;
+  if (!list.find(item => item.id === selectedProjectId)) selectedProjectId = list[0]?.id || '';
+  return list.filter(item => !(item.id === 'mobile-app' && !item.features?.length));
 }
 
 function getProjectAvatarHtml(project, extraClass = '') {
@@ -376,19 +391,28 @@ async function deleteProjectCascade(projectId) {
   ensureProjectRegistry();
   showLoadingOverlay('กำลังลบ Project...');
   try {
-    const related = Object.values(DB.features || {}).filter(store => sanitizeProjectId(store?.meta?.projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID) === projectId).map(store => store.meta.id);
+    const related = Object.values(DB.features || {})
+      .filter(store => sanitizeProjectId(store?.meta?.projectId || DEFAULT_PROJECT_ID, DEFAULT_PROJECT_ID) === projectId)
+      .map(store => store.meta.id);
+
     for (const featureId of related) {
       await deleteFeatureData(featureId);
     }
+
     delete DB.projects[projectId];
-    const remaining = getProjectsList().filter(item => item.id !== projectId);
-    selectedProjectId = remaining[0]?.id || DEFAULT_PROJECT_ID;
+
     FEATURES = buildFeatures();
+    const remaining = getProjectsList().filter(item => item.id !== projectId);
+    selectedProjectId = remaining[0]?.id || '';
+    currentFeatureId = 'overview';
+
     injectScreenStyles();
-    updateHeaderStrip();
-    renderProjectSidebarDrawer();
+    closeProjectSidebar();
     closeModal();
-    switchTab('overview');
+    rebuildNav();
+    renderProjectSidebarDrawer();
+    renderOverview();
+    updateHeaderStrip();
   } finally {
     hideLoadingOverlay();
   }
