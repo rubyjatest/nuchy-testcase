@@ -183,6 +183,13 @@ function ensureProjectRegistry() {
   });
 }
 
+
+function syncProjectRegistryToStatus() {
+  if (!isPlainObject(DB.status)) DB.status = {};
+  ensureProjectRegistry();
+  DB.status.projects = JSON.parse(JSON.stringify(DB.projects || {}));
+}
+
 function getProjectsList() {
   ensureProjectRegistry();
   const byId = {};
@@ -1048,6 +1055,7 @@ function applyDrivePayload(payload) {
   DB = {
     features: {},
     status: payload.status || {},
+    projects: (payload.status && payload.status.projects && typeof payload.status.projects === 'object') ? payload.status.projects : {},
     deletedCases: payload.deletedCases || [],
     executions: payload.executions || {},
   };
@@ -1224,6 +1232,7 @@ async function writeFeatureFile(featureId) {
 }
 
 async function writeStatusFile() {
+  syncProjectRegistryToStatus();
   await driveProxyRequest('status-upsert', {
     method: 'POST',
     body: {
@@ -1690,7 +1699,7 @@ function renderOverview(){
   const projects = getProjectsList();
   const cards = projects.map(project => {
     const stats = getProjectStats(project.id);
-    return `<div class="overview-project-card"><div class="overview-project-head"><div class="overview-project-main">${getProjectAvatarHtml(project, 'overview-project-avatar')}<div><div class="overview-project-name">${escapeHtml(project.name)}</div><div class="overview-project-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div></div></div><div class="overview-project-badges"><span class="project-pill blue">${stats.features} Features</span><span class="project-pill green">${stats.qa} QA</span><span class="project-pill purple">${stats.dev} Dev</span><span class="project-pill orange">${stats.defects} Defects</span></div></div><div class="overview-project-foot"><div class="progress-line full"><span style="width:${stats.progress}%;"></span></div><div class="overview-project-meta">เลือก project จากปุ่ม ☰ เพื่อเข้าไปจัดการ feature</div></div></div>`;
+    return `<button class="overview-project-card" type="button" onclick="switchProjectView('${project.id}')"><div class="overview-project-head"><div class="overview-project-main">${getProjectAvatarHtml(project, 'overview-project-avatar')}<div><div class="overview-project-name">${escapeHtml(project.name)}</div><div class="overview-project-text">${escapeHtml(project.overview || 'ยังไม่มี Project Overview')}</div></div></div><div class="overview-project-badges"><span class="project-pill blue">${stats.features} Features</span><span class="project-pill green">${stats.qa} QA</span><span class="project-pill purple">${stats.dev} Dev</span><span class="project-pill orange">${stats.defects} Defects</span></div></div><div class="overview-project-foot"><div class="progress-line full"><span style="width:${stats.progress}%;"></span></div><div class="overview-project-meta">กดเพื่อเปิด project นี้</div></div></button>`;
   }).join('');
   document.getElementById('main-content').innerHTML=`<section class="overview-projects-page"><div class="section-sep"><span>Projects Overview</span><span class="count-pill">${projects.length} projects</span></div><div class="overview-project-list">${cards || `<div class="empty-state"><div class="emoji">📁</div><p>ยังไม่มี project — กด <strong>☰</strong> เพื่อสร้าง</p></div>`}</div></section>`;
 }

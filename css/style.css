@@ -1354,7 +1354,7 @@ body.project-sidebar-open{overflow:hidden;}
 .project-avatar-emoji{font-size:22px;}
 .project-list-avatar{width:32px;height:32px;border-radius:10px;font-size:18px;}
 .overview-project-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
-.overview-project-card{border:1px solid var(--border);background:var(--card);border-radius:20px;padding:20px 22px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:14px;}
+.overview-project-card{border:1px solid var(--border);background:var(--card);border-radius:20px;padding:20px 22px;box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:14px;width:100%;text-align:left;cursor:pointer;appearance:none;}.overview-project-card:hover{border-color:var(--primary);transform:translateY(-1px);}
 .overview-project-head{display:flex;flex-direction:column;gap:14px;}
 .overview-project-main{display:flex;align-items:flex-start;gap:14px;}
 .overview-project-avatar{width:54px;height:54px;border-radius:16px;font-size:28px;}
