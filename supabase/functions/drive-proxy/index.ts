@@ -498,7 +498,7 @@ async function makeFilePublic(fileId: string) {
   }
 }
 
-async function uploadImageFile(file: File, caseFolderId: string) {
+async function uploadAttachmentFile(file: File, caseFolderId: string) {
   const authMode = getGoogleAuthConfig().mode;
   const form = new FormData();
   form.append(
@@ -523,7 +523,7 @@ async function uploadImageFile(file: File, caseFolderId: string) {
   });
   const payload = await parseGoogleResponse(res);
   if (!res.ok || !payload.id) {
-    throw new Error(normalizeDriveCreateError(buildDriveErrorMessage(payload, `Image upload failed: ${res.status}`), authMode));
+    throw new Error(normalizeDriveCreateError(buildDriveErrorMessage(payload, `Attachment upload failed: ${res.status}`), authMode));
   }
 
   await makeFilePublic(payload.id);
@@ -531,8 +531,11 @@ async function uploadImageFile(file: File, caseFolderId: string) {
   return {
     id: payload.id,
     name: payload.name,
-    url: `https://lh3.googleusercontent.com/d/${payload.id}`,
+    url: `https://drive.google.com/uc?export=download&id=${payload.id}`,
+    previewUrl: `https://drive.google.com/uc?export=download&id=${payload.id}`,
     viewUrl: payload.webViewLink,
+    mimeType: file.type || "",
+    size: file.size || 0,
   };
 }
 
@@ -683,12 +686,12 @@ async function uploadFilesToFolder(req: Request) {
   const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
   if (!files.length) throw new Error("No files uploaded");
 
-  const images = [];
+  const uploadedFiles = [];
   for (const file of files) {
-    images.push(await uploadImageFile(file, caseFolderId));
+    uploadedFiles.push(await uploadAttachmentFile(file, caseFolderId));
   }
 
-  return { ok: true, images };
+  return { ok: true, files: uploadedFiles, images: uploadedFiles };
 }
 
 async function requireSupabaseUser(req: Request) {

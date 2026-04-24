@@ -1356,6 +1356,18 @@ async function driveUploadImages(files, caseId) {
   return result.images || [];
 }
 
+
+async function driveUploadAttachments(files, folderKey) {
+  const form = new FormData();
+  form.append('folderKey', folderKey);
+  files.forEach(file => form.append('files', file));
+  const result = await driveProxyRequest('attachment-upload', {
+    method: 'POST',
+    formData: form,
+  });
+  return result.files || result.images || [];
+}
+
 async function driveDeleteFile(fileId) {
   await driveProxyRequest('file-delete', {
     method: 'DELETE',
@@ -1932,21 +1944,64 @@ function renderDefectCard(featureId, item, idx, qaCases){
         <div class="form-group"><label>Fix Summary</label><textarea class="form-textarea" onchange="updateDefectField('${featureId}','${defect.id}','fixSummary',this.value)">${escapeHtml(defect.fixSummary || '')}</textarea></div>
       </div>
       <div class="workspace-grid workspace-grid-2">
-        <div class="form-group"><label>Upload attachment</label><div class="attachment-upload-row"><label class="btn-modal-ok workspace-upload-btn">Upload file<input type="file" multiple style="display:none" onchange="uploadDefectAttachments(event,'${featureId}','${defect.id}')"></label></div></div>
-        <div class="form-group"><label>Add comment</label><div class="comment-entry"><textarea class="form-textarea" id="comment-input-${defect.id}" placeholder="ใส่ comment เพิ่มเติม"></textarea><button class="btn-modal-ok" type="button" onclick="addDefectComment('${featureId}','${defect.id}')">Add comment</button></div></div>
+        <div class="form-group"><label>Upload attachment</label><div class="attachment-upload-row"><label class="btn-modal-ok workspace-upload-btn">Upload file / video<input type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" style="display:none" onchange="uploadDefectAttachments(event,'${featureId}','${defect.id}')"></label><div class="workspace-help-text">รองรับรูปภาพและวิดีโอ .mp4 .mov .webm</div></div></div>
+        <div class="form-group"><label>Add comment</label><div class="comment-entry"><textarea class="form-textarea" id="comment-input-${defect.id}" placeholder="ใส่ comment เพิ่มเติม"></textarea><label class="btn-modal-secondary workspace-upload-btn comment-upload-btn">แนบไฟล์/วิดีโอ<input id="comment-files-${defect.id}" type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" style="display:none"></label><button class="btn-modal-ok" type="button" onclick="addDefectComment('${featureId}','${defect.id}')">Add comment</button></div></div>
       </div>
       <div class="workspace-meta-row workspace-meta-row-stacked">
         <div class="workspace-meta-block"><span class="workspace-meta-label">Attachments</span>
-          ${attachments.length ? `<ul class="inline-link-list">${attachments.map((att, i) => `<li><a href="${escapeHtml(att.viewUrl || att.url || '#')}" target="_blank">${escapeHtml(att.name || `Attachment ${i+1}`)}</a><button class="inline-remove-btn" type="button" onclick="removeDefectAttachment('${featureId}','${defect.id}','${att.id || ''}')">ลบ</button></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี attachment</div>`}
+          ${renderAttachmentGallery(attachments, featureId, defect.id)}
         </div>
         <div class="workspace-meta-block"><span class="workspace-meta-label">Comment History</span>
-          ${comments.length ? `<ul class="comment-list">${comments.map(comment => `<li><div class="comment-meta">${escapeHtml(comment.author || '-')} · ${escapeHtml(formatExecTimestamp(comment.createdAt))}</div><div>${escapeHtml(comment.text || '')}</div></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี comment</div>`}
+          ${renderDefectComments(comments)}
         </div>
         <div class="workspace-meta-block"><span class="workspace-meta-label">Activity</span>
           ${history.length ? `<ul class="comment-list">${history.map(entry => `<li><div class="comment-meta">${escapeHtml(entry.author || '-')} · ${escapeHtml(formatExecTimestamp(entry.createdAt))}</div><div><strong>${escapeHtml(entry.action || '')}</strong>${entry.detail ? ` — ${escapeHtml(entry.detail)}` : ''}</div></li>`).join('')}</ul>` : `<div class="workspace-empty-inline">ยังไม่มี activity</div>`}
         </div>
       </div>
     </div>`;
+}
+
+
+function getAttachmentKind(att){
+  const mime = String(att?.mimeType || att?.type || '').toLowerCase();
+  const name = String(att?.name || '').toLowerCase();
+  if (mime.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(name)) return 'video';
+  if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(name)) return 'image';
+  return 'file';
+}
+
+function renderAttachmentPreview(att){
+  const url = escapeHtml(att.previewUrl || att.url || att.viewUrl || '#');
+  const viewUrl = escapeHtml(att.viewUrl || att.url || '#');
+  const name = escapeHtml(att.name || 'Attachment');
+  const kind = getAttachmentKind(att);
+  if (kind === 'video') return `<div class="attachment-preview attachment-video"><video controls preload="metadata" src="${url}"></video><a href="${viewUrl}" target="_blank">${name}</a></div>`;
+  if (kind === 'image') return `<div class="attachment-preview attachment-image"><a href="${viewUrl}" target="_blank"><img src="${url}" alt="${name}"></a><a href="${viewUrl}" target="_blank">${name}</a></div>`;
+  return `<div class="attachment-preview attachment-file"><a href="${viewUrl}" target="_blank">📎 ${name}</a></div>`;
+}
+
+function renderAttachmentGallery(attachments, featureId, defectId){
+  if (!attachments || !attachments.length) return `<div class="workspace-empty-inline">ยังไม่มี attachment</div>`;
+  return `<div class="attachment-gallery">${attachments.map((att) => `<div class="attachment-item">${renderAttachmentPreview(att)}<div class="attachment-meta">${escapeHtml(att.uploadedBy || '-')} · ${escapeHtml(formatExecTimestamp(att.uploadedAt))}</div><button class="inline-remove-btn" type="button" onclick="removeDefectAttachment('${featureId}','${defectId}','${att.id || ''}')">ลบ</button></div>`).join('')}</div>`;
+}
+
+function renderDefectComments(comments){
+  if (!comments || !comments.length) return `<div class="workspace-empty-inline">ยังไม่มี comment</div>`;
+  return `<ul class="comment-list">${comments.map(comment => `<li><div class="comment-meta">${escapeHtml(comment.author || '-')} · ${escapeHtml(formatExecTimestamp(comment.createdAt))}</div>${comment.text ? `<div>${escapeHtml(comment.text || '')}</div>` : ''}${comment.attachments?.length ? `<div class="comment-attachments">${comment.attachments.map(att => renderAttachmentPreview(att)).join('')}</div>` : ''}</li>`).join('')}</ul>`;
+}
+
+function normalizeUploadedAttachment(file){
+  return {
+    id: file.id,
+    name: file.name,
+    url: file.url,
+    previewUrl: file.previewUrl || file.url,
+    viewUrl: file.viewUrl || file.url,
+    mimeType: file.mimeType || file.type || '',
+    size: file.size || 0,
+    uploadedAt: new Date().toISOString(),
+    uploadedBy: getCurrentActor(),
+  };
 }
 
 function makeWorkspaceId(prefix){
@@ -2115,15 +2170,8 @@ async function uploadDefectAttachments(event, featureId, itemId){
     const store = normalizeWorkspaceCollections(featureId); if (!store) return;
     const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
     normalizeDefectRecord(item);
-    const uploaded = await driveUploadImages(files, itemId);
-    item.attachments.push(...uploaded.map(file => ({
-      id: file.id,
-      name: file.name,
-      url: file.url,
-      viewUrl: file.viewUrl || file.url,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: getCurrentActor(),
-    })));
+    const uploaded = await driveUploadAttachments(files, itemId);
+    item.attachments.push(...uploaded.map(normalizeUploadedAttachment));
     touchWorkspaceRecord(item);
     recordDefectHistory(item, 'uploaded attachment', `${files.length} file(s)`);
     scheduleFeatureWrite(featureId);
@@ -2150,20 +2198,36 @@ function removeDefectAttachment(featureId, itemId, attachmentId){
   if (attachmentId) driveDeleteFile(attachmentId).catch(() => {});
 }
 
-function addDefectComment(featureId, itemId){
+async function addDefectComment(featureId, itemId){
   const input = document.getElementById(`comment-input-${itemId}`);
+  const fileInput = document.getElementById(`comment-files-${itemId}`);
   const text = String(input?.value || '').trim();
-  if (!text) return;
+  const files = Array.from(fileInput?.files || []);
+  if (!text && !files.length) return;
   const store = normalizeWorkspaceCollections(featureId); if (!store) return;
   const item = store.defects.find(entry => entry.id === itemId); if (!item) return;
   normalizeDefectRecord(item);
   if (!Array.isArray(item.comments)) item.comments = [];
-  const comment = { id: makeWorkspaceId('CMT'), author: getCurrentActor(), text, createdAt: new Date().toISOString() };
-  item.comments.unshift(comment);
-  touchWorkspaceRecord(item);
-  recordDefectHistory(item, 'commented', text.slice(0, 80));
-  scheduleFeatureWrite(featureId);
-  rerenderCurrentFeature();
+  showLoadingOverlay(files.length ? `กำลังอัปโหลดไฟล์ comment ${files.length} ไฟล์...` : 'กำลังบันทึก comment...');
+  try {
+    let attachments = [];
+    if (files.length) {
+      const uploaded = await driveUploadAttachments(files, `${itemId}-comments`);
+      attachments = uploaded.map(normalizeUploadedAttachment);
+    }
+    const comment = { id: makeWorkspaceId('CMT'), author: getCurrentActor(), text, attachments, createdAt: new Date().toISOString() };
+    item.comments.unshift(comment);
+    touchWorkspaceRecord(item);
+    recordDefectHistory(item, 'commented', text ? text.slice(0, 80) : `${files.length} attachment(s)`);
+    scheduleFeatureWrite(featureId);
+    rerenderCurrentFeature();
+  } catch (err) {
+    alert('บันทึก comment ไม่สำเร็จ: ' + buildErrorMessage(err));
+  } finally {
+    hideLoadingOverlay();
+    if (input) input.value = '';
+    if (fileInput) fileInput.value = '';
+  }
 }
 
 function removeDefect(featureId, itemId){
