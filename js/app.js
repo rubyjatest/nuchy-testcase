@@ -3164,7 +3164,24 @@ async function submitAddFeature(){
 // ══════════════════════════════════════════
 function openModal(id,html){
   let o=document.getElementById('modal-overlay');
-  if(!o){o=document.createElement('div');o.id='modal-overlay';o.className='modal-overlay';o.onclick=e=>{if(e.target===o)closeModal();};document.body.appendChild(o);}
+  if(!o){
+    o=document.createElement('div');
+    o.id='modal-overlay';
+    o.className='modal-overlay';
+    // Do not close add/edit/submit dialogs when clicking outside.
+    // Users must choose Cancel/Close or Save explicitly to prevent accidental data loss.
+    o.onclick=e=>{
+      if(e.target===o){
+        const box=o.querySelector('.modal-box');
+        if(box){
+          box.classList.remove('modal-attention');
+          void box.offsetWidth;
+          box.classList.add('modal-attention');
+        }
+      }
+    };
+    document.body.appendChild(o);
+  }
   o.innerHTML=`<div class="modal-box" id="${id}">${html}</div>`;
   o.style.display='flex';requestAnimationFrame(()=>o.classList.add('open'));
 }

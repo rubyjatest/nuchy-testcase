@@ -1377,3 +1377,15 @@ body.project-sidebar-open{overflow:hidden;}
 .project-edit-actions{display:flex;align-items:center;gap:8px;}
 .btn-modal-danger-soft{background:#fff4f3;}
 @media (max-width:980px){.project-shell-head{flex-direction:column;}.project-dashboard-card.compact-grid{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:18px;}}
+
+
+/* Keep modals open when users click outside; show a small attention nudge instead. */
+.modal-box.modal-attention {
+  animation: modalAttention 160ms ease-in-out;
+}
+@keyframes modalAttention {
+  0% { transform: translateY(0) scale(1); }
+  35% { transform: translateY(0) scale(1.006); }
+  70% { transform: translateY(0) scale(0.998); }
+  100% { transform: translateY(0) scale(1); }
+}
