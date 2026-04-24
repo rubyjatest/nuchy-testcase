@@ -129,6 +129,9 @@ function sanitizeFeaturePayload(value: unknown) {
   return {
     meta: isPlainObject(data.meta) ? data.meta : {},
     cases: Array.isArray(data.cases) ? data.cases : [],
+    devCases: Array.isArray(data.devCases) ? data.devCases : [],
+    defects: Array.isArray(data.defects) ? data.defects : [],
+    rounds: Array.isArray(data.rounds) ? data.rounds : [],
     fileId: typeof data.fileId === "string" ? data.fileId : "",
     featureId: typeof data.featureId === "string" ? data.featureId : "",
   };
@@ -578,6 +581,9 @@ async function readBootstrapState(bootstrap: DriveBootstrap) {
         featureId,
         meta,
         cases: feature.cases,
+        devCases: feature.devCases,
+        defects: feature.defects,
+        rounds: feature.rounds,
         fileId: file.id,
       });
     } catch (error) {
@@ -604,6 +610,9 @@ function validateFeatureBody(value: unknown) {
     featureId,
     meta,
     cases: Array.isArray(payload.cases) ? payload.cases : [],
+    devCases: Array.isArray(payload.devCases) ? payload.devCases : [],
+    defects: Array.isArray(payload.defects) ? payload.defects : [],
+    rounds: Array.isArray(payload.rounds) ? payload.rounds : [],
     fileId: payload.fileId || "",
   };
 }
@@ -618,11 +627,17 @@ async function upsertFeatureFile(body: unknown) {
     fileId = (await createJsonFile(fileName, bootstrap.featuresFolderId, {
       meta: payload.meta,
       cases: payload.cases,
+      devCases: payload.devCases,
+      defects: payload.defects,
+      rounds: payload.rounds,
     })).id;
   } else {
     await writeJsonFile(fileId, {
       meta: payload.meta,
       cases: payload.cases,
+      devCases: payload.devCases,
+      defects: payload.defects,
+      rounds: payload.rounds,
     });
   }
 

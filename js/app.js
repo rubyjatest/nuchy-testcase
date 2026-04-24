@@ -586,7 +586,7 @@ async function submitProjectImport(projectId) {
       const uniqueScreens = [...new Set(rows.map(item => item.screenName).filter(Boolean))];
       const screenMap = Object.fromEntries(uniqueScreens.map((name, idx) => [name, `S${idx + 1}`]));
       if (!store) {
-        store = DB.features[featureId] = { meta: buildFeatureMetaFromImport(projectId, project.name, rows[0], uniqueScreens), cases: [], devCases: [], defects: [], fileId: null };
+        store = DB.features[featureId] = { meta: buildFeatureMetaFromImport(projectId, project.name, rows[0], uniqueScreens), cases: [], devCases: [], defects: [], rounds: [], fileId: null };
       } else {
         store.meta.projectId = projectId;
         store.meta.projectName = project.name;
@@ -1068,6 +1068,7 @@ function applyDrivePayload(payload) {
       cases: feature.cases || [],
       devCases: feature.devCases || [],
       defects: feature.defects || [],
+      rounds: feature.rounds || [],
       fileId: feature.fileId || null,
     };
   });
@@ -1220,6 +1221,7 @@ async function persistFeatureFile(featureId) {
       cases: f.cases,
       devCases: f.devCases || [],
       defects: f.defects || [],
+      rounds: f.rounds || [],
       fileId: f.fileId || '',
     },
   });
@@ -1264,6 +1266,7 @@ async function seedBundledFeaturesIfNeeded() {
       cases: cloneJson(template.cases),
       devCases: [],
       defects: [],
+      rounds: [],
       fileId: null,
     };
     await persistFeatureFile(template.meta.id);
@@ -1308,7 +1311,7 @@ async function setStatus(id, st, executionMeta = null) {
 }
 
 async function saveNewFeature(meta) {
-  DB.features[meta.id] = { meta, cases: [], devCases: [], defects: [], fileId: null };
+  DB.features[meta.id] = { meta, cases: [], devCases: [], defects: [], rounds: [], fileId: null };
   await writeFeatureFile(meta.id);
 }
 
@@ -1324,16 +1327,20 @@ async function deleteFeatureData(featureId) {
 async function saveCase(featureId, c) {
   const f = DB.features[featureId];
   if (!f) return;
-  const idx = f.cases.findIndex(x => x.id === c.id);
-  if (idx >= 0) f.cases[idx] = c;
-  else f.cases.push(c);
+  const coll = getCaseCollection(featureId);
+  const idx = coll.cases.findIndex(x => x.id === c.id);
+  if (idx >= 0) coll.cases[idx] = c;
+  else coll.cases.push(c);
   scheduleFeatureWrite(featureId);
 }
 
 async function deleteCaseData(featureId, caseId) {
   const f = DB.features[featureId];
-  if (f) f.cases = f.cases.filter(c => c.id !== caseId);
-  if (!DB.deletedCases.includes(caseId)) DB.deletedCases.push(caseId);
+  if (f) {
+    const coll = getCaseCollection(featureId);
+    coll.owner.cases = coll.cases.filter(c => c.id !== caseId);
+    if (!coll.round && !DB.deletedCases.includes(caseId)) DB.deletedCases.push(caseId);
+  }
   if (DB.executions?.[caseId]) delete DB.executions[caseId];
   scheduleFeatureWrite(featureId);
   scheduleStatusWrite();
@@ -1446,16 +1453,187 @@ const SCREEN_PALETTE=[
 function getScreenStyle(i){return SCREEN_PALETTE[i%SCREEN_PALETTE.length];}
 
 let FEATURES=[], currentFeatureId='overview', activeType='all', activeScreen='all', activeStatusFilt='all', expandedCaseId=null, activeFeatureTab='qa';
+let activeRoundByFeature = JSON.parse(localStorage.getItem('qa_active_round_by_feature') || '{}');
+
+
+function saveActiveRoundSelection() {
+  localStorage.setItem('qa_active_round_by_feature', JSON.stringify(activeRoundByFeature || {}));
+}
+function ensureFeatureRoundsStore(store) {
+  if (!store) return [];
+  if (!Array.isArray(store.rounds)) store.rounds = [];
+  return store.rounds;
+}
+function getActiveRoundId(featureId) {
+  const value = activeRoundByFeature?.[featureId] || 'main';
+  const store = DB.features?.[featureId];
+  if (value !== 'main' && !store?.rounds?.some(r => r.id === value)) {
+    activeRoundByFeature[featureId] = 'main';
+    saveActiveRoundSelection();
+    return 'main';
+  }
+  return value;
+}
+function setActiveRoundId(featureId, roundId) {
+  activeRoundByFeature[featureId] = roundId || 'main';
+  saveActiveRoundSelection();
+}
+function getActiveRoundStore(featureId) {
+  const store = DB.features?.[featureId];
+  if (!store) return null;
+  const activeId = getActiveRoundId(featureId);
+  if (activeId === 'main') return null;
+  ensureFeatureRoundsStore(store);
+  return store.rounds.find(r => r.id === activeId) || null;
+}
+function getVisibleCasesForStore(store) {
+  if (!store?.meta?.id) return [];
+  const round = getActiveRoundStore(store.meta.id);
+  return round ? (round.cases || []) : (store.cases || []);
+}
+function getCaseCollection(featureId) {
+  const store = DB.features?.[featureId];
+  if (!store) return { owner: null, cases: [], round: null };
+  const round = getActiveRoundStore(featureId);
+  if (round) {
+    if (!Array.isArray(round.cases)) round.cases = [];
+    return { owner: round, cases: round.cases, round };
+  }
+  if (!Array.isArray(store.cases)) store.cases = [];
+  return { owner: store, cases: store.cases, round: null };
+}
+function findCaseInFeature(featureId, caseId) {
+  const coll = getCaseCollection(featureId);
+  return coll.cases.find(c => c.id === caseId) || null;
+}
+function normalizeScreenName(value) {
+  return String(value || '').trim() || 'Main';
+}
+function ensureImportedScreensForFeature(featureId, cases) {
+  const store = DB.features?.[featureId];
+  if (!store?.meta) return cases;
+  const meta = store.meta;
+  if (!meta.screens || typeof meta.screens !== 'object') meta.screens = {};
+  const screens = meta.screens;
+  const nameToKey = {};
+  Object.entries(screens).forEach(([key, sc]) => {
+    nameToKey[String(key).trim().toLowerCase()] = key;
+    if (sc?.name) nameToKey[String(sc.name).trim().toLowerCase()] = key;
+    if (sc?.label) nameToKey[String(sc.label).trim().toLowerCase()] = key;
+  });
+  let nextIndex = Object.keys(screens).reduce((max, key) => {
+    const n = parseInt(String(key).replace(/\D/g, ''), 10);
+    return Number.isFinite(n) ? Math.max(max, n) : max;
+  }, 0) + 1;
+  return cases.map(c => {
+    const rawScreen = normalizeScreenName(c.screen_name || c.screen || c.screenName);
+    const lookup = rawScreen.toLowerCase();
+    let screenKey = nameToKey[lookup];
+    if (!screenKey) {
+      screenKey = `S${nextIndex++}`;
+      const style = getScreenStyle(Object.keys(screens).length);
+      screens[screenKey] = {
+        label: `Screen ${String(screenKey).replace(/\D/g, '')}`,
+        name: rawScreen,
+        cssClass: `sc-${featureId}-s${String(screenKey).replace(/\D/g, '')}`,
+        bg: style.bg,
+        color: style.color,
+        border: style.border,
+      };
+      nameToKey[lookup] = screenKey;
+      nameToKey[screenKey.toLowerCase()] = screenKey;
+    }
+    return { ...c, screen: screenKey, screen_name: rawScreen, screen_id: screenKey };
+  });
+}
+function renderRoundControls(feature) {
+  const store = DB.features?.[feature.meta.id];
+  if (!store) return '';
+  const rounds = ensureFeatureRoundsStore(store);
+  const activeId = getActiveRoundId(feature.meta.id);
+  const roundOptions = [`<option value="main"${activeId === 'main' ? ' selected' : ''}>Main Test Cases</option>`]
+    .concat(rounds.map((r, idx) => `<option value="${escapeHtml(r.id)}"${activeId === r.id ? ' selected' : ''}>${escapeHtml(r.name || `Round ${idx + 1}`)}</option>`))
+    .join('');
+  const activeRound = rounds.find(r => r.id === activeId);
+  const badge = activeId === 'main' ? `<span class="count-pill">Main</span>` : `<span class="count-pill">${escapeHtml(activeRound?.name || activeId)}</span>`;
+  return `<div class="round-toolbar"><div class="round-toolbar-left"><label class="round-label">Test Round</label><select class="form-select round-select" onchange="switchTestRound('${feature.meta.id}', this.value)">${roundOptions}</select>${badge}</div><div class="round-toolbar-actions"><button class="icon-btn icon-btn-neutral" onclick="openDuplicateRoundModal('${feature.meta.id}')">⧉ Duplicate จาก Main</button></div></div>`;
+}
+function switchTestRound(featureId, roundId) {
+  setActiveRoundId(featureId, roundId || 'main');
+  expandedCaseId = null;
+  FEATURES = buildFeatures();
+  injectScreenStyles();
+  const feature = FEATURES.find(f => f.meta.id === featureId);
+  if (feature) renderFeature(feature);
+}
+function makeRoundCaseId(originalId, roundNumber, existingIds) {
+  const safe = String(originalId || 'TC').replace(/\s+/g, '-');
+  let candidate = `${safe}-R${roundNumber}`;
+  let i = 2;
+  while (existingIds.has(candidate)) candidate = `${safe}-R${roundNumber}-${i++}`;
+  existingIds.add(candidate);
+  return candidate;
+}
+function openDuplicateRoundModal(featureId) {
+  if (!ensureWritable()) return;
+  const store = DB.features?.[featureId];
+  if (!store) return;
+  ensureFeatureRoundsStore(store);
+  const defaultName = `Round ${store.rounds.length + 1}`;
+  openModal('duplicate-round-modal', `<div class="modal-header"><span class="modal-title">⧉ Duplicate Test Round</span><span class="modal-sub">สร้างรอบจาก Main Test Case</span></div><div class="modal-body"><div class="form-group"><label>ชื่อรอบ</label><input class="form-input" id="round-name" value="${escapeHtml(defaultName)}" placeholder="เช่น Regression รอบ 2 / UAT Build 1.0.3" /></div><label class="check-row"><input type="checkbox" id="round-copy-attachments" checked /> Copy attachments จาก Main</label><div style="font-size:12px;color:var(--text2);background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;line-height:1.7;">ระบบจะ copy test case จาก Main พร้อม screen chip เดิม แต่จะสร้าง Case ID ใหม่ให้ เพื่อให้ status/execute ของแต่ละรอบไม่ปนกัน</div><div id="round-error" class="form-error" style="display:none;"></div></div><div class="modal-footer"><button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button><button class="btn-modal-ok" onclick="duplicateRoundFromMain('${featureId}')">สร้างรอบ</button></div>`);
+}
+async function duplicateRoundFromMain(featureId) {
+  const store = DB.features?.[featureId];
+  if (!store) return;
+  const name = document.getElementById('round-name')?.value?.trim() || `Round ${(store.rounds || []).length + 1}`;
+  const copyAttachments = document.getElementById('round-copy-attachments')?.checked !== false;
+  if (!store.cases?.length) { showFormError('ยังไม่มี Main Test Case ให้ duplicate'); return; }
+  const okBtn = document.querySelector('.btn-modal-ok');
+  if (okBtn) { okBtn.disabled = true; okBtn.textContent = 'กำลังสร้าง...'; }
+  try {
+    ensureFeatureRoundsStore(store);
+    const roundNumber = store.rounds.length + 1;
+    const existingIds = new Set([...(store.cases || []).map(c => c.id), ...store.rounds.flatMap(r => (r.cases || []).map(c => c.id))]);
+    const roundId = `ROUND-${Date.now()}`;
+    const cases = (store.cases || []).map(c => {
+      const next = cloneJson(c);
+      next.original_case_id = c.original_case_id || c.id;
+      next.id = makeRoundCaseId(c.id, roundNumber, existingIds);
+      next.round_id = roundId;
+      if (!copyAttachments) { next.images = []; next.attachments = []; }
+      return next;
+    });
+    store.rounds.push({ id: roundId, name, cases, devCases: [], defects: [], createdAt: new Date().toISOString() });
+    setActiveRoundId(featureId, roundId);
+    await writeFeatureFile(featureId);
+    closeModal();
+    FEATURES = buildFeatures();
+    injectScreenStyles(); rebuildNav(); updateHeaderStrip();
+    const feature = FEATURES.find(f => f.meta.id === featureId); if (feature) renderFeature(feature);
+  } catch (err) {
+    showFormError('สร้างรอบไม่สำเร็จ: ' + buildErrorMessage(err));
+    if (okBtn) { okBtn.disabled = false; okBtn.textContent = 'สร้างรอบ'; }
+  }
+}
 
 function buildFeatures() {
   const deleted = getDeletedSet();
-  return Object.values(DB.features).map(f => ({
-    meta: f.meta,
-    cases: (f.cases || []).filter(c => !deleted.has(c.id)),
-    devCases: Array.isArray(f.devCases) ? f.devCases : [],
-    defects: Array.isArray(f.defects) ? f.defects : [],
-    custom: true,
-  }));
+  return Object.values(DB.features).map(f => {
+    ensureFeatureRoundsStore(f);
+    const activeRound = getActiveRoundStore(f.meta?.id);
+    const visibleCases = getVisibleCasesForStore(f);
+    return {
+      meta: f.meta,
+      cases: (visibleCases || []).filter(c => !deleted.has(c.id)),
+      mainCases: (f.cases || []).filter(c => !deleted.has(c.id)),
+      rounds: f.rounds || [],
+      activeRound,
+      isRoundView: !!activeRound,
+      devCases: Array.isArray(f.devCases) ? f.devCases : [],
+      defects: activeRound ? (activeRound.defects || []) : (Array.isArray(f.defects) ? f.defects : []),
+      custom: true,
+    };
+  });
 }
 
 function getStatusCounts(cases){
@@ -1773,6 +1951,7 @@ function renderFeature(feature){
         <button class="btn-add-case" onclick="openAddCaseModal('${meta.id}')">＋ Add case</button>
       </div>
     </div>
+    ${renderRoundControls(feature)}
     <div class="feature-subtabs">
       <button class="feature-subtab${activeFeatureTab==='qa'?' active':''}" onclick="switchFeatureSubTab('qa')">QA Cases <span class="count-pill">${cases.length}</span></button>
       <button class="feature-subtab${activeFeatureTab==='dev'?' active':''}" onclick="switchFeatureSubTab('dev')">Dev Cases <span class="count-pill">${devCount}</span></button>
@@ -2503,7 +2682,7 @@ async function uploadImages(event, caseId, featureId) {
   showLoadingOverlay(`กำลังอัปโหลด ${files.length} รูป...`);
   try {
     const f = DB.features[featureId]; if (!f) return;
-    const c = f.cases.find(x => x.id === caseId); if (!c) return;
+    const c = findCaseInFeature(featureId, caseId); if (!c) return;
     if (!c.images) c.images = [];
     const uploaded = await driveUploadImages(files, caseId);
     c.images.push(...uploaded);
@@ -2524,7 +2703,7 @@ function confirmDeleteImage(caseId, featureId, imgIndex) {
   if (!ensureWritable()) return;
   openConfirmModal('ลบรูปภาพ', 'ต้องการลบรูปนี้ออกใช่ไหม?', async () => {
     const f = DB.features[featureId]; if (!f) return;
-    const c = f.cases.find(x => x.id === caseId); if (!c || !c.images) return;
+    const c = findCaseInFeature(featureId, caseId); if (!c || !c.images) return;
     const [removed] = c.images.splice(imgIndex, 1);
     if (removed?.id) driveDeleteFile(removed.id).catch(() => {});
     await saveCase(featureId, c);
@@ -2537,7 +2716,7 @@ function confirmDeleteImage(caseId, featureId, imgIndex) {
 
 function openImageViewer(caseId, featureId, startIndex = 0) {
   const f = DB.features[featureId]; if (!f) return;
-  const c = f.cases.find(x => x.id === caseId); if (!c || !c.images?.length) return;
+  const c = findCaseInFeature(featureId, caseId); if (!c || !c.images?.length) return;
   let cur = startIndex;
   const imgs = c.images;
 
@@ -2625,7 +2804,7 @@ function openImportCsvModal(featureId) {
         <strong>รูปแบบ CSV (UTF-8 with BOM):</strong><br>
         คอลัมน์: <code>id, type, screen, title, sub, steps, expect</code><br>
         • <b>type</b>: positive / edge / negative<br>
-        • <b>screen</b>: key จาก screens เช่น S1, S2<br>
+        • <b>screen</b>: ใส่ชื่อหน้าจอปกติได้เลย ระบบจะ map เป็น S1, S2 ให้อัตโนมัติ<br>
         • <b>steps</b> และ <b>expect</b>: คั่นหลายบรรทัดด้วย <code> | </code>
       </div>
       <div class="form-group">
@@ -2665,7 +2844,7 @@ function parseCasesFromCsvText(text) {
     const obj = {};
     headers.forEach((h, i) => obj[h] = (row[i] || '').trim());
     return {
-      id: obj.id, type: obj.type||'positive', screen: obj.screen||'S1',
+      id: obj.id, type: obj.type||'positive', screen: obj.screen || 'Main', screen_name: obj.screen || 'Main',
       title: obj.title, sub: obj.sub||'',
       steps: obj.steps ? obj.steps.split('|').map(s=>s.trim()).filter(Boolean) : [],
       expect: obj.expect ? obj.expect.split('|').map(s=>s.trim()).filter(Boolean) : [],
@@ -2678,7 +2857,7 @@ function parseCsvPreview(text, featureId) {
   const errEl = document.getElementById('csv-error');
   errEl.style.display = 'none';
   try {
-    _csvParsed = parseCasesFromCsvText(text);
+    _csvParsed = ensureImportedScreensForFeature(featureId, parseCasesFromCsvText(text));
 
     const preview = document.getElementById('csv-preview');
     const content = document.getElementById('csv-preview-content');
@@ -2731,6 +2910,7 @@ function inferFeatureIdFromFilename(name) {
 function mergeImportedCases(featureId, cases, mode = 'merge') {
   const f = DB.features[featureId];
   if (!f) throw new Error(`ไม่พบ feature: ${featureId}`);
+  cases = ensureImportedScreensForFeature(featureId, cases);
 
   const existingMap = new Map(f.cases.map(c => [c.id, c]));
   let added = 0;
@@ -2769,7 +2949,7 @@ async function submitImportCsv(featureId) {
     const { added, updated } = mergeImportedCases(featureId, _csvParsed, 'merge');
     await writeFeatureFile(featureId);
     closeModal();
-    FEATURES = buildFeatures(); rebuildNav(); updateHeaderStrip();
+    FEATURES = buildFeatures(); injectScreenStyles(); rebuildNav(); updateHeaderStrip();
     const feat = FEATURES.find(f => f.meta.id === featureId);
     if (feat) renderFeature(feat);
     setTimeout(() => alert(`Import สำเร็จ: เพิ่ม ${added} cases${updated ? `, อัปเดต ${updated}` : ''}`),100);
@@ -2836,7 +3016,7 @@ async function parseBulkCsvFiles(files) {
     try {
       if (!DB.features[featureId]) throw new Error(`ไม่พบ featureId "${featureId}" จากชื่อไฟล์`);
       const text = await file.text();
-      const cases = parseCasesFromCsvText(text);
+      const cases = ensureImportedScreensForFeature(featureId, parseCasesFromCsvText(text));
       _bulkCsvParsed.push({ fileName: file.name, featureId, cases, error: '' });
     } catch (err) {
       _bulkCsvParsed.push({ fileName: file.name, featureId, cases: [], error: err.message });
@@ -3007,7 +3187,7 @@ async function uploadCaseAttachments(event, caseId, featureId){
   showLoadingOverlay(`กำลังอัปโหลด ${files.length} ไฟล์...`);
   try {
     const f = DB.features[featureId]; if (!f) return;
-    const c = f.cases.find(x => x.id === caseId); if (!c) return;
+    const c = findCaseInFeature(featureId, caseId); if (!c) return;
     normalizeCaseAttachments(c);
     const uploaded = await driveUploadAttachments(files, caseId);
     c.attachments.push(...uploaded.map(normalizeUploadedAttachment));
@@ -3027,7 +3207,7 @@ async function uploadCaseAttachments(event, caseId, featureId){
 function removeCaseAttachment(caseId, featureId, attachmentId){
   if (!ensureWritable()) return;
   const f = DB.features[featureId]; if (!f) return;
-  const c = f.cases.find(x => x.id === caseId); if (!c) return;
+  const c = findCaseInFeature(featureId, caseId); if (!c) return;
   normalizeCaseAttachments(c);
   const target = c.attachments.find(att => att.id === attachmentId);
   c.attachments = c.attachments.filter(att => att.id !== attachmentId);
@@ -3078,7 +3258,7 @@ function openAddCaseModal(featureId){
 function openEditCaseModal(featureId, caseId){
   if (!ensureWritable()) return;
   const f = DB.features[featureId]; if (!f) return;
-  const c = f.cases.find(item => item.id === caseId); if (!c) return;
+  const c = findCaseInFeature(featureId, caseId); if (!c) return;
   normalizeCaseAttachments(c);
   caseModalAttachments = (c.attachments || []).map(att => ({...att}));
   const screenOptions = Object.entries(f.meta.screens)
@@ -3121,12 +3301,12 @@ async function submitAddCase(featureId){
   const expect=document.getElementById('fc-expect').value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!id||!title||!steps.length||!expect.length){showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ');return;}
   const f = DB.features[featureId];
-  if(f&&f.cases.some(c=>c.id===id)){showFormError(`Case ID "${id}" ซ้ำ`);return;}
+  if(f&&getCaseCollection(featureId).cases.some(c=>c.id===id)){showFormError(`Case ID "${id}" ซ้ำ`);return;}
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
   try{
     await saveCase(featureId,{id,type,screen,title,sub,steps,expect,images:[],attachments:[...caseModalAttachments]});
-    FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
+    FEATURES=buildFeatures();injectScreenStyles();closeModal();rebuildNav();updateHeaderStrip();
     const feat=FEATURES.find(f=>f.meta.id===featureId);if(feat)renderFeature(feat);
   }catch(err){
     showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
@@ -3145,7 +3325,7 @@ async function submitEditCase(featureId, caseId){
   if(!id||!title||!steps.length||!expect.length){showFormError('กรุณากรอก ID, Title, Steps และ Expected ให้ครบ');return;}
 
   const f = DB.features[featureId];
-  const existing = f?.cases.find(c => c.id === caseId);
+  const existing = findCaseInFeature(featureId, caseId);
   if(!existing){showFormError('ไม่พบ test case ที่ต้องการแก้ไข');return;}
 
   const okBtn=document.querySelector('.btn-modal-ok');
@@ -3163,7 +3343,7 @@ async function submitEditCase(featureId, caseId){
       images: existing.images || [],
       attachments: [...caseModalAttachments],
     });
-    FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
+    FEATURES=buildFeatures();injectScreenStyles();closeModal();rebuildNav();updateHeaderStrip();
     const feat=FEATURES.find(item=>item.meta.id===featureId);if(feat)renderFeature(feat);
   }catch(err){
     showFormError(`บันทึกไม่สำเร็จ: ${err.message}`);
