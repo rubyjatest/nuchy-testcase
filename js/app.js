@@ -2328,12 +2328,14 @@ function renderTable(list,feature){
     const execRemark = execMeta.remark || '-';
     const execTime = formatExecTimestamp(execMeta.updatedAt);
     const imgCount=c.images?.length||0;
+    const attachmentCount=getCaseAttachmentCount(c);
+    const attachmentBadge=attachmentCount>0?`<span class="img-badge" onclick="event.stopPropagation();toggleDetail('${c.id}', true)">📎 ${attachmentCount}</span>`:'';
     const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
     <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
-      <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>
+      <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge} ${attachmentBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>
       <td class="col-type hide-sm">${typePill}</td>
       <td class="col-status">${statusSelectHtml(c.id,feature.meta.id)}</td>
       <td class="col-actions">
@@ -2379,6 +2381,13 @@ function renderTable(list,feature){
               🖼 แนบรูปภาพ
             </label>
           </div>`}
+          ${renderCaseAttachmentGallery(c.attachments || [], c.id, feature.meta.id)}
+          <div style="grid-column:1/-1;">
+            <label class="btn-add-img" title="แนบรูปหรือวิดีโอ">
+              <input type="file" accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple style="display:none" onchange="uploadCaseAttachments(event,'${c.id}','${feature.meta.id}')">
+              📎 แนบรูป / วิดีโอ
+            </label>
+          </div>
         </div>
       </td>
     </tr>`;
@@ -2732,7 +2741,7 @@ function mergeImportedCases(featureId, cases, mode = 'merge') {
       const existing = existingMap.get(c.id);
       if (existing) updated++;
       else added++;
-      return { ...c, images: existing?.images || [] };
+      return { ...c, images: existing?.images || [], attachments: existing?.attachments || [] };
     });
     return { added, updated };
   }
@@ -2741,11 +2750,11 @@ function mergeImportedCases(featureId, cases, mode = 'merge') {
   cases.forEach(c => {
     const existing = existingMap.get(c.id);
     if (existing) {
-      Object.assign(existing, c, { images: existing.images || [] });
+      Object.assign(existing, c, { images: existing.images || [], attachments: existing.attachments || [] });
       updated++;
       return;
     }
-    nextCases.push({ ...c, images: c.images || [] });
+    nextCases.push({ ...c, images: c.images || [], attachments: c.attachments || [] });
     added++;
   });
   f.cases = nextCases;
@@ -2921,11 +2930,122 @@ function confirmDeleteFeature(featureId){
   );
 }
 
+let caseModalAttachments = [];
+
+function getCaseModalAttachmentHtml(){
+  const list = caseModalAttachments || [];
+  const gallery = list.length
+    ? `<div class="attachment-gallery case-attachment-gallery">${list.map((att, index) => `<div class="attachment-item">${renderAttachmentPreview(att)}<div class="attachment-meta">${escapeHtml(att.uploadedBy || '-')} · ${escapeHtml(formatExecTimestamp(att.uploadedAt))}</div><button class="inline-remove-btn" type="button" onclick="removeCaseModalAttachment(${index})">ลบ</button></div>`).join('')}</div>`
+    : `<div class="workspace-empty-inline">ยังไม่มี attachment</div>`;
+  return `
+    <div class="form-group case-attachment-section">
+      <label>Attachments <span class="form-hint">รองรับรูปภาพและวิดีโอ .mp4 .mov .webm</span></label>
+      <div class="attachment-upload-row">
+        <label class="btn-modal-secondary workspace-upload-btn">แนบรูป / วิดีโอ
+          <input type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" style="display:none" onchange="uploadCaseModalAttachments(event)">
+        </label>
+      </div>
+      <div id="case-modal-attachments">${gallery}</div>
+    </div>`;
+}
+
+function refreshCaseModalAttachments(){
+  const el = document.getElementById('case-modal-attachments');
+  if (!el) return;
+  const list = caseModalAttachments || [];
+  el.innerHTML = list.length
+    ? `<div class="attachment-gallery case-attachment-gallery">${list.map((att, index) => `<div class="attachment-item">${renderAttachmentPreview(att)}<div class="attachment-meta">${escapeHtml(att.uploadedBy || '-')} · ${escapeHtml(formatExecTimestamp(att.uploadedAt))}</div><button class="inline-remove-btn" type="button" onclick="removeCaseModalAttachment(${index})">ลบ</button></div>`).join('')}</div>`
+    : `<div class="workspace-empty-inline">ยังไม่มี attachment</div>`;
+}
+
+async function uploadCaseModalAttachments(event){
+  if (!ensureWritable()) { event.target.value = ''; return; }
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  const caseId = String(document.getElementById('fc-id')?.value || '').trim() || `case-${Date.now()}`;
+  showLoadingOverlay(`กำลังอัปโหลด ${files.length} ไฟล์...`);
+  try {
+    const uploaded = await driveUploadAttachments(files, caseId);
+    caseModalAttachments.push(...uploaded.map(normalizeUploadedAttachment));
+    refreshCaseModalAttachments();
+  } catch (err) {
+    alert('อัปโหลด attachment ไม่สำเร็จ: ' + buildErrorMessage(err));
+  } finally {
+    hideLoadingOverlay();
+    event.target.value = '';
+  }
+}
+
+function removeCaseModalAttachment(index){
+  const [removed] = caseModalAttachments.splice(index, 1);
+  refreshCaseModalAttachments();
+  if (removed?.id) driveDeleteFile(removed.id).catch(() => {});
+}
+
+function normalizeCaseAttachments(c){
+  if (!c) return [];
+  if (!Array.isArray(c.attachments)) c.attachments = [];
+  return c.attachments;
+}
+
+function getCaseAttachmentCount(c){
+  return (c?.attachments || []).length;
+}
+
+function renderCaseAttachmentGallery(attachments, caseId, featureId){
+  if (!attachments || !attachments.length) return '';
+  return `<div style="grid-column:1/-1;">
+    <div class="detail-section-title">Attachments (${attachments.length})</div>
+    <div class="attachment-gallery case-attachment-gallery">${attachments.map((att) => `<div class="attachment-item">${renderAttachmentPreview(att)}<div class="attachment-meta">${escapeHtml(att.uploadedBy || '-')} · ${escapeHtml(formatExecTimestamp(att.uploadedAt))}</div><button class="inline-remove-btn" type="button" onclick="event.stopPropagation();removeCaseAttachment('${caseId}','${featureId}','${att.id || ''}')">ลบ</button></div>`).join('')}</div>
+  </div>`;
+}
+
+async function uploadCaseAttachments(event, caseId, featureId){
+  if (!ensureWritable()) { event.target.value = ''; return; }
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  showLoadingOverlay(`กำลังอัปโหลด ${files.length} ไฟล์...`);
+  try {
+    const f = DB.features[featureId]; if (!f) return;
+    const c = f.cases.find(x => x.id === caseId); if (!c) return;
+    normalizeCaseAttachments(c);
+    const uploaded = await driveUploadAttachments(files, caseId);
+    c.attachments.push(...uploaded.map(normalizeUploadedAttachment));
+    await saveCase(featureId, c);
+    FEATURES = buildFeatures();
+    const feat = FEATURES.find(item => item.meta.id === featureId);
+    if (feat) renderFeature(feat);
+    setTimeout(() => toggleDetail(caseId, true), 100);
+  } catch (err) {
+    alert('อัปโหลด attachment ไม่สำเร็จ: ' + buildErrorMessage(err));
+  } finally {
+    hideLoadingOverlay();
+    event.target.value = '';
+  }
+}
+
+function removeCaseAttachment(caseId, featureId, attachmentId){
+  if (!ensureWritable()) return;
+  const f = DB.features[featureId]; if (!f) return;
+  const c = f.cases.find(x => x.id === caseId); if (!c) return;
+  normalizeCaseAttachments(c);
+  const target = c.attachments.find(att => att.id === attachmentId);
+  c.attachments = c.attachments.filter(att => att.id !== attachmentId);
+  saveCase(featureId, c).then(() => {
+    FEATURES = buildFeatures();
+    const feat = FEATURES.find(item => item.meta.id === featureId);
+    if (feat) renderFeature(feat);
+    setTimeout(() => toggleDetail(caseId, true), 100);
+  });
+  if (target?.id) driveDeleteFile(target.id).catch(() => {});
+}
+
 // ══════════════════════════════════════════
 //  ADD / EDIT CASE MODAL
 // ══════════════════════════════════════════
 function openAddCaseModal(featureId){
   if (!ensureWritable()) return;
+  caseModalAttachments = [];
   const f=FEATURES.find(f=>f.meta.id===featureId);if(!f)return;
   const screenOptions=Object.entries(f.meta.screens).map(([k,sc])=>`<option value="${k}">${sc.label} – ${sc.name}</option>`).join('');
   const nums=f.cases.map(c=>parseInt(c.id.replace(/\D/g,''))||0);
@@ -2947,6 +3067,7 @@ function openAddCaseModal(featureId){
         <textarea class="form-textarea" id="fc-steps" rows="4" placeholder="เปิดแอป&#10;กด Login&#10;ใส่ email และ password"></textarea></div>
       <div class="form-group"><label>Expected behavior <span class="form-hint">บรรทัดละ 1 รายการ</span></label>
         <textarea class="form-textarea" id="fc-expect" rows="4" placeholder="แสดงหน้า Home&#10;Token บันทึกแล้ว"></textarea></div>
+      ${getCaseModalAttachmentHtml()}
     </div>
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
@@ -2958,6 +3079,8 @@ function openEditCaseModal(featureId, caseId){
   if (!ensureWritable()) return;
   const f = DB.features[featureId]; if (!f) return;
   const c = f.cases.find(item => item.id === caseId); if (!c) return;
+  normalizeCaseAttachments(c);
+  caseModalAttachments = (c.attachments || []).map(att => ({...att}));
   const screenOptions = Object.entries(f.meta.screens)
     .map(([k, sc]) => `<option value="${k}"${k===c.screen?' selected':''}>${sc.label} – ${sc.name}</option>`)
     .join('');
@@ -2980,6 +3103,7 @@ function openEditCaseModal(featureId, caseId){
         <textarea class="form-textarea" id="fc-steps" rows="4" placeholder="เปิดแอป&#10;กด Login&#10;ใส่ email และ password">${escapeHtml((c.steps||[]).join('\n'))}</textarea></div>
       <div class="form-group"><label>Expected behavior <span class="form-hint">บรรทัดละ 1 รายการ</span></label>
         <textarea class="form-textarea" id="fc-expect" rows="4" placeholder="แสดงหน้า Home&#10;Token บันทึกแล้ว">${escapeHtml((c.expect||[]).join('\n'))}</textarea></div>
+      ${getCaseModalAttachmentHtml()}
     </div>
     <div class="modal-footer">
       <button class="btn-modal-cancel" onclick="closeModal()">ยกเลิก</button>
@@ -3001,7 +3125,7 @@ async function submitAddCase(featureId){
   const okBtn=document.querySelector('.btn-modal-ok');
   if(okBtn){okBtn.disabled=true;okBtn.textContent='กำลังบันทึก...';}
   try{
-    await saveCase(featureId,{id,type,screen,title,sub,steps,expect,images:[]});
+    await saveCase(featureId,{id,type,screen,title,sub,steps,expect,images:[],attachments:[...caseModalAttachments]});
     FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
     const feat=FEATURES.find(f=>f.meta.id===featureId);if(feat)renderFeature(feat);
   }catch(err){
@@ -3037,6 +3161,7 @@ async function submitEditCase(featureId, caseId){
       steps,
       expect,
       images: existing.images || [],
+      attachments: [...caseModalAttachments],
     });
     FEATURES=buildFeatures();closeModal();rebuildNav();updateHeaderStrip();
     const feat=FEATURES.find(item=>item.meta.id===featureId);if(feat)renderFeature(feat);
