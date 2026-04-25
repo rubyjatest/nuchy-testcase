@@ -970,7 +970,8 @@ function buildRoundControls(feature) {
       ${activeRound ? `<button class="icon-btn icon-btn-danger" onclick="deleteRound('${featureId}','${activeRound.id}')">🗑 ลบรอบ</button>` : ''}
     </div>
     <div class="round-toolbar-right">
-      
+      <button class="btn-export-csv" onclick="exportSummaryHtml('${featureId}')">📧 Export Summary HTML</button>
+      <button class="btn-export-csv" onclick="exportSummaryImage('${featureId}')">🖼 Export Summary PNG</button>
     </div>
   </div>${renderRoundSummary(featureId)}`;
 }
@@ -1008,7 +1009,21 @@ function downloadBlob(content, filename, type) {
   URL.revokeObjectURL(url);
 }
 
+function exportSummaryHtml(featureId) {
+  const rec = getFeatureRecord(featureId);
+  const round = getActiveRound(featureId);
+  const html = buildSummaryExportHtml(featureId);
+  if (!html || !rec || !round) return;
+  downloadBlob(html, `${safeFileName(rec.meta.name)}_${safeFileName(round.name)}_summary.html`, 'text/html;charset=utf-8');
+}
 
+function exportSummaryImage(featureId) {
+  const rec = getFeatureRecord(featureId);
+  const round = getActiveRound(featureId);
+  if (!rec || !round) {
+    alert('กรุณาเลือก Test Round ก่อน export summary');
+    return;
+  }
   const s = getRoundSummary(round);
   const canvas = document.createElement('canvas');
   canvas.width = 1200; canvas.height = 720;
@@ -2281,4 +2296,32 @@ async function resetAllStatus(){
   updateHeaderStrip();
   if(currentFeatureId==='overview')renderOverview();
   else{const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(f)renderFeature(f);}
+}
+
+// SAFE SUMMARY + EXPORT (stable)
+function safeGetSummary(cases){
+  if(!cases||!Array.isArray(cases)) return {total:0,pass:0,fail:0,pending:0,rate:0};
+  const total=cases.length;
+  const pass=cases.filter(c=>c.status==='pass').length;
+  const fail=cases.filter(c=>c.status==='fail').length;
+  const pending=total-pass-fail;
+  const rate= total?Math.round(pass/total*100):0;
+  return {total,pass,fail,pending,rate};
+}
+
+function safeExportHTML(featureId){
+  try{
+    const f=DB.features[featureId];
+    if(!f||!f.qaCases) return alert('no data');
+    const s=safeGetSummary(f.qaCases);
+    const html=`<html><body>
+    <h2>QA Summary</h2>
+    <p>Total:${s.total} Pass:${s.pass} Fail:${s.fail} Pending:${s.pending} Rate:${s.rate}%</p>
+    </body></html>`;
+    const blob=new Blob([html],{type:'text/html'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='summary.html';
+    a.click();
+  }catch(e){console.error(e);}
 }
