@@ -1556,7 +1556,7 @@ function renderRoundControls(feature) {
     .join('');
   const activeRound = rounds.find(r => r.id === activeId);
   const badge = activeId === 'main' ? `<span class="count-pill">Main</span>` : `<span class="count-pill">${escapeHtml(activeRound?.name || activeId)}</span>`;
-  return `<div class="round-toolbar"><div class="round-toolbar-left"><label class="round-label">Test Round</label><select class="form-select round-select" onchange="switchTestRound('${feature.meta.id}', this.value)">${roundOptions}</select>${badge}</div><div class="round-toolbar-actions"><button class="icon-btn icon-btn-neutral" onclick="openDuplicateRoundModal('${feature.meta.id}')">⧉ Duplicate จาก Main</button></div></div>`;
+  return `<div class="round-toolbar"><div class="round-toolbar-left"><label class="round-label">Test Round</label><select class="form-select round-select" onchange="switchTestRound('${feature.meta.id}', this.value)">${roundOptions}</select>${badge}</div><div class="round-toolbar-actions"><button class="icon-btn icon-btn-neutral" onclick="openDuplicateRoundModal('${feature.meta.id}')">⧉ Duplicate จาก Main</button><button class="icon-btn icon-btn-neutral" onclick="exportRoundSummaryHtml('${feature.meta.id}')">📧 Export HTML</button><button class="icon-btn icon-btn-neutral" onclick="exportRoundSummaryImage('${feature.meta.id}')">🖼 Export PNG</button></div></div>${renderRoundSummaryCards(feature.meta.id)}`;
 }
 function switchTestRound(featureId, roundId) {
   setActiveRoundId(featureId, roundId || 'main');
@@ -1566,6 +1566,151 @@ function switchTestRound(featureId, roundId) {
   const feature = FEATURES.find(f => f.meta.id === featureId);
   if (feature) renderFeature(feature);
 }
+
+function getRoundSummary(featureId) {
+  const round = getActiveRoundStore(featureId);
+  if (!round || !Array.isArray(round.cases)) {
+    return { hasRound: false, round: null, total: 0, pass: 0, fail: 0, pending: 0, rate: 0, badge: '—' };
+  }
+  const total = round.cases.length;
+  const pass = round.cases.filter(c => getStatus(c.id) === 'passed').length;
+  const fail = round.cases.filter(c => getStatus(c.id) === 'failed').length;
+  const pending = total - pass - fail;
+  const rate = total ? Math.round((pass / total) * 100) : 0;
+  const badge = rate >= 80 ? '🟢 Good' : (rate >= 50 ? '🟡 Risk' : '🔴 Critical');
+  return { hasRound: true, round, total, pass, fail, pending, rate, badge };
+}
+
+function renderRoundSummaryCards(featureId) {
+  const s = getRoundSummary(featureId);
+  if (!s.hasRound) {
+    return `<div class="round-summary-empty">Main Test Case เป็น template จึงไม่นำมาคิด summary — เลือกหรือ duplicate Test Round ก่อน</div>`;
+  }
+  return `<div class="round-summary-card-wrap" id="round-summary-cards">
+    <div class="round-summary-badge">${s.badge}</div>
+    <div class="round-summary-card"><div class="round-summary-num">${s.total}</div><div class="round-summary-label">Total</div></div>
+    <div class="round-summary-card pass"><div class="round-summary-num">${s.pass}</div><div class="round-summary-label">Pass</div></div>
+    <div class="round-summary-card fail"><div class="round-summary-num">${s.fail}</div><div class="round-summary-label">Fail</div></div>
+    <div class="round-summary-card pending"><div class="round-summary-num">${s.pending}</div><div class="round-summary-label">Pending</div></div>
+    <div class="round-summary-card rate"><div class="round-summary-num">${s.rate}%</div><div class="round-summary-label">Pass Rate</div></div>
+  </div>`;
+}
+
+function safeSummaryFileName(value) {
+  return String(value || 'qa-summary').replace(/[^\w\-ก-๙]+/g, '_').slice(0, 80);
+}
+
+function buildRoundSummaryHtml(featureId) {
+  const store = DB.features?.[featureId];
+  const s = getRoundSummary(featureId);
+  if (!store || !s.hasRound) {
+    alert('กรุณาเลือก Test Round ก่อน export summary');
+    return '';
+  }
+  const meta = store.meta || {};
+  const rows = (s.round.cases || []).map(c => {
+    const status = getStatus(c.id);
+    const screenId = c.screen_id || c.screen || '-';
+    const screenName = c.screen_name || meta.screens?.[c.screen]?.name || '-';
+    return `<tr><td>${escapeHtml(screenId)}</td><td>${escapeHtml(screenName)}</td><td>${escapeHtml(c.id)}</td><td>${escapeHtml(c.title)}</td><td>${escapeHtml(getStatusLabel(status))}</td></tr>`;
+  }).join('');
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>QA Summary</title>
+  <style>body{font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;padding:24px}.wrap{max-width:1080px;margin:auto;background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:24px}.meta{color:#64748b;line-height:1.7}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0}.card{background:#f1f5f9;border-radius:12px;padding:14px;text-align:center}.num{font-size:26px;font-weight:800}.pass{color:#16a34a}.fail{color:#dc2626}.pending{color:#ca8a04}.rate{color:#2563eb}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#e2e8f0}.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#e2e8f0;margin-top:8px}</style></head><body><div class="wrap">
+    <h1>QA Progress Summary</h1>
+    <div class="meta">Project: ${escapeHtml(meta.projectName || '-')}<br>Feature: ${escapeHtml(meta.name || featureId)}<br>Round: ${escapeHtml(s.round.name || s.round.id)}<br>Generated: ${escapeHtml(new Date().toLocaleString())}</div>
+    <div class="badge">${escapeHtml(s.badge)}</div>
+    <div class="cards">
+      <div class="card"><div class="num">${s.total}</div><div>Total</div></div>
+      <div class="card pass"><div class="num">${s.pass}</div><div>Pass</div></div>
+      <div class="card fail"><div class="num">${s.fail}</div><div>Fail</div></div>
+      <div class="card pending"><div class="num">${s.pending}</div><div>Pending</div></div>
+      <div class="card rate"><div class="num">${s.rate}%</div><div>Pass Rate</div></div>
+    </div>
+    <h2>Test Case Status</h2><table><thead><tr><th>Screen ID</th><th>Screen</th><th>Case ID</th><th>Title</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+  </div></body></html>`;
+}
+
+function downloadTextFile(content, fileName, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportRoundSummaryHtml(featureId) {
+  const html = buildRoundSummaryHtml(featureId);
+  if (!html) return;
+  const store = DB.features?.[featureId];
+  const s = getRoundSummary(featureId);
+  downloadTextFile(html, `${safeSummaryFileName(store?.meta?.name)}_${safeSummaryFileName(s.round?.name)}_summary.html`, 'text/html;charset=utf-8');
+}
+
+function exportRoundSummaryImage(featureId) {
+  const store = DB.features?.[featureId];
+  const s = getRoundSummary(featureId);
+  if (!store || !s.hasRound) {
+    alert('กรุณาเลือก Test Round ก่อน export summary');
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 1200;
+  canvas.height = 720;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(40, 40, 1120, 640);
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 42px Arial';
+  ctx.fillText('QA Progress Summary', 80, 110);
+  ctx.font = '24px Arial';
+  ctx.fillStyle = '#475569';
+  ctx.fillText(`Feature: ${store.meta?.name || featureId}`, 80, 160);
+  ctx.fillText(`Round: ${s.round.name || s.round.id}`, 80, 195);
+  ctx.fillText(`Generated: ${new Date().toLocaleString()}`, 80, 230);
+  ctx.font = 'bold 30px Arial';
+  ctx.fillStyle = '#0f172a';
+  ctx.fillText(s.badge, 80, 285);
+  const cards = [
+    ['Total', s.total, '#0f172a'],
+    ['Pass', s.pass, '#16a34a'],
+    ['Fail', s.fail, '#dc2626'],
+    ['Pending', s.pending, '#ca8a04'],
+    ['Pass Rate', `${s.rate}%`, '#2563eb'],
+  ];
+  cards.forEach((card, idx) => {
+    const x = 80 + (idx * 215);
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(x, 330, 180, 125);
+    ctx.fillStyle = card[2];
+    ctx.font = 'bold 38px Arial';
+    ctx.fillText(String(card[1]), x + 24, 385);
+    ctx.fillStyle = '#334155';
+    ctx.font = '22px Arial';
+    ctx.fillText(card[0], x + 24, 425);
+  });
+  ctx.fillStyle = '#334155';
+  ctx.font = '22px Arial';
+  ctx.fillText(`Pass ${s.pass} • Fail ${s.fail} • Pending ${s.pending}`, 80, 530);
+  canvas.toBlob(blob => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeSummaryFileName(store.meta?.name)}_${safeSummaryFileName(s.round?.name)}_summary.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
+
 function makeRoundCaseId(originalId, roundNumber, existingIds) {
   const safe = String(originalId || 'TC').replace(/\s+/g, '-');
   let candidate = `${safe}-R${roundNumber}`;
