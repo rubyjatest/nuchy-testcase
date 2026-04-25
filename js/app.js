@@ -1,3 +1,9 @@
+
+// Starred filter global guard
+if (typeof window !== 'undefined' && typeof window.activeStarredOnly === 'undefined') {
+  window.activeStarredOnly = false;
+}
+
 // ── QA TEST CASES — v8 ──
 // Auth : Supabase (email/password)
 // Data : Google Drive only ผ่าน Supabase Edge Function proxy
@@ -31,6 +37,7 @@ let gWriteQueue = {};
 let DB = { features: {}, status: {}, deletedCases: [], executions: {} };
 let DB_READY = false;
 let currentTheme = 'light';
+let activeStarredOnly = false;
 let DRIVE_STATE = {
   rootFolderId: null,
   rootFolderName: '',
@@ -2131,7 +2138,7 @@ function renderQaCasesPanel(feature, screenOptionHtml){
     <div class="list-toolbar list-toolbar-single">
       <div class="list-toolbar-item list-toolbar-actions">
         <button class="icon-btn icon-btn-neutral" onclick="toggleFilterPanel()">⚙️ Filter</button>
-        <button class="icon-btn icon-btn-neutral star-filter-btn${activeStarredOnly ? ' active' : ''}" onclick="toggleStarredFilter()">★ Starred only</button>
+        <button class="icon-btn icon-btn-neutral star-filter-btn${window.activeStarredOnly ? ' active' : ''}" onclick="toggleStarredFilter()">★ Starred only</button>
       </div>
     </div>
     <div class="filter-panel" id="filter-panel" hidden>
@@ -2654,7 +2661,7 @@ async function toggleCaseStar(featureId, caseId) {
 }
 
 function toggleStarredFilter() {
-  activeStarredOnly = !activeStarredOnly;
+  window.activeStarredOnly = !window.activeStarredOnly;
   applyFilters();
 }
 
@@ -2666,7 +2673,7 @@ function applyFilters(){
     const typeOk=activeType==='all'||c.type===activeType;
     const screenOk=activeScreen==='all'||c.screen===activeScreen;
     const stOk=activeStatusFilt==='all'||getStatus(c.id)===activeStatusFilt;
-    const starOk=!activeStarredOnly||isCaseStarred(c);
+    const starOk=!window.activeStarredOnly||isCaseStarred(c);
     const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&String(s).toLowerCase().includes(q));
     return typeOk&&screenOk&&stOk&&starOk&&srchOk;
   });
