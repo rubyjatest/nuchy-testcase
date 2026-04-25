@@ -2645,7 +2645,6 @@ async function toggleCaseStar(featureId, caseId) {
 
   // Optimistic update: show star immediately, save in background.
   c.starred = !previousValue;
-  c._savingStar = true;
 
   FEATURES = buildFeatures();
   let feature = FEATURES.find(f => f.meta.id === featureId);
@@ -2653,29 +2652,24 @@ async function toggleCaseStar(featureId, caseId) {
     renderFeature(feature);
     requestAnimationFrame(() => {
       const row = document.getElementById(`row-${caseId}`);
+      const starBtn = row?.querySelector('.star-btn');
       if (row) row.classList.add('star-flash');
+      if (starBtn) {
+        starBtn.classList.remove('star-pop');
+        void starBtn.offsetWidth;
+        starBtn.classList.add('star-pop');
+      }
     });
   }
 
   try {
     await writeFeatureFile(featureId);
-
-    // clear transient saving flag after save succeeds
-    const latest = getCaseCollection(featureId).cases.find(item => item.id === caseId);
-    if (latest) delete latest._savingStar;
-
-    FEATURES = buildFeatures();
-    feature = FEATURES.find(f => f.meta.id === featureId);
-    if (feature) renderFeature(feature);
   } catch (err) {
     console.error(err);
 
     // Revert if save fails.
     const latest = getCaseCollection(featureId).cases.find(item => item.id === caseId);
-    if (latest) {
-      latest.starred = previousValue;
-      delete latest._savingStar;
-    }
+    if (latest) latest.starred = previousValue;
 
     FEATURES = buildFeatures();
     feature = FEATURES.find(f => f.meta.id === featureId);
@@ -2728,7 +2722,7 @@ function renderTable(list,feature){
     const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
     <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
-      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case">${c._savingStar ? '⏳' : (isCaseStarred(c) ? '★' : '☆')}</button></td>
+      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case">${isCaseStarred(c) ? '★' : '☆'}</button></td>
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
       <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge} ${attachmentBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>

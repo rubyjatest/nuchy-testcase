@@ -1522,3 +1522,23 @@ body.project-sidebar-open{overflow:hidden;}
 .star-btn.saving {
   opacity: .7;
 }
+
+
+.star-btn.star-pop {
+  animation: starPopGlow .38s ease;
+}
+
+@keyframes starPopGlow {
+  0% {
+    transform: scale(1);
+    text-shadow: none;
+  }
+  45% {
+    transform: scale(1.35) rotate(-8deg);
+    text-shadow: 0 0 14px rgba(245, 158, 11, .72), 0 0 28px rgba(245, 158, 11, .34);
+  }
+  100% {
+    transform: scale(1);
+    text-shadow: 0 0 10px rgba(245, 158, 11, .28);
+  }
+}
