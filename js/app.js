@@ -970,8 +970,7 @@ function buildRoundControls(feature) {
       ${activeRound ? `<button class="icon-btn icon-btn-danger" onclick="deleteRound('${featureId}','${activeRound.id}')">🗑 ลบรอบ</button>` : ''}
     </div>
     <div class="round-toolbar-right">
-      <button class="btn-export-csv" onclick="exportSummaryHtml('${featureId}')">📧 Export Summary HTML</button>
-      <button class="btn-export-csv" onclick="exportSummaryImage('${featureId}')">🖼 Export Summary PNG</button>
+      
     </div>
   </div>${renderRoundSummary(featureId)}`;
 }
@@ -1009,21 +1008,7 @@ function downloadBlob(content, filename, type) {
   URL.revokeObjectURL(url);
 }
 
-function exportSummaryHtml(featureId) {
-  const rec = getFeatureRecord(featureId);
-  const round = getActiveRound(featureId);
-  const html = buildSummaryExportHtml(featureId);
-  if (!html || !rec || !round) return;
-  downloadBlob(html, `${safeFileName(rec.meta.name)}_${safeFileName(round.name)}_summary.html`, 'text/html;charset=utf-8');
-}
 
-function exportSummaryImage(featureId) {
-  const rec = getFeatureRecord(featureId);
-  const round = getActiveRound(featureId);
-  if (!rec || !round) {
-    alert('กรุณาเลือก Test Round ก่อน export summary');
-    return;
-  }
   const s = getRoundSummary(round);
   const canvas = document.createElement('canvas');
   canvas.width = 1200; canvas.height = 720;
