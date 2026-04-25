@@ -3742,3 +3742,44 @@ async function resetAllStatus() {
     endAsyncFlow('resetting', requestId);
   }
 }
+
+
+// Export Summary as .eml (global handler for inline onclick)
+window.exportRoundSummaryEmail = function exportRoundSummaryEmail(featureId) {
+  try {
+    const store = DB.features?.[featureId];
+    const s = getRoundSummary(featureId);
+    if (!store || !s?.hasRound) {
+      alert('กรุณาเลือก Test Round ก่อน export');
+      return;
+    }
+
+    const subject = `QA Summary: ${store.meta?.name || featureId} - ${s.round?.name || s.round?.id || 'Round'}`;
+    const htmlBody = buildRoundSummaryHtml(featureId);
+    if (!htmlBody) return;
+
+    const emlContent = [
+      'From: QA Tool <qa@local>',
+      'To: Team <team@local>',
+      `Subject: ${subject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/html; charset=UTF-8',
+      '',
+      htmlBody
+    ].join('\r\n');
+
+    const blob = new Blob([emlContent], { type: 'message/rfc822' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeSummaryFileName(store.meta?.name)}_${safeSummaryFileName(s.round?.name || s.round?.id)}_summary.eml`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error(err);
+    alert('Export Email ไม่สำเร็จ: ' + buildErrorMessage(err));
+  }
+};
+
