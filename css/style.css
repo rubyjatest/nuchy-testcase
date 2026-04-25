@@ -1542,3 +1542,33 @@ body.project-sidebar-open{overflow:hidden;}
     text-shadow: 0 0 10px rgba(245, 158, 11, .28);
   }
 }
+
+
+/* ⭐ Cute Star UI */
+.star-btn {
+  border: 0;
+  background: radial-gradient(circle at 30% 30%, #fff7ed, #fde68a);
+  color: #f59e0b;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  box-shadow: 0 4px 10px rgba(245, 158, 11, 0.25);
+  transition: all .18s ease;
+}
+
+.star-btn:hover {
+  transform: scale(1.15) rotate(-6deg);
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.35);
+}
+
+.star-btn.active {
+  background: radial-gradient(circle at 30% 30%, #fff, #facc15);
+  color: #f59e0b;
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.6);
+}
