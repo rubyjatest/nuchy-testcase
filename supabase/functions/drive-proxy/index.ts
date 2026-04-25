@@ -129,6 +129,8 @@ function sanitizeFeaturePayload(value: unknown) {
   return {
     meta: isPlainObject(data.meta) ? data.meta : {},
     cases: Array.isArray(data.cases) ? data.cases : [],
+    devCases: Array.isArray(data.devCases) ? data.devCases : [],
+    defects: Array.isArray(data.defects) ? data.defects : [],
     rounds: Array.isArray(data.rounds) ? data.rounds : [],
     fileId: typeof data.fileId === "string" ? data.fileId : "",
     featureId: typeof data.featureId === "string" ? data.featureId : "",
@@ -499,7 +501,7 @@ async function makeFilePublic(fileId: string) {
   }
 }
 
-async function uploadImageFile(file: File, caseFolderId: string) {
+async function uploadAttachmentFile(file: File, caseFolderId: string) {
   const authMode = getGoogleAuthConfig().mode;
   const form = new FormData();
   form.append(
@@ -524,7 +526,7 @@ async function uploadImageFile(file: File, caseFolderId: string) {
   });
   const payload = await parseGoogleResponse(res);
   if (!res.ok || !payload.id) {
-    throw new Error(normalizeDriveCreateError(buildDriveErrorMessage(payload, `Image upload failed: ${res.status}`), authMode));
+    throw new Error(normalizeDriveCreateError(buildDriveErrorMessage(payload, `Attachment upload failed: ${res.status}`), authMode));
   }
 
   await makeFilePublic(payload.id);
@@ -532,8 +534,11 @@ async function uploadImageFile(file: File, caseFolderId: string) {
   return {
     id: payload.id,
     name: payload.name,
-    url: `https://lh3.googleusercontent.com/d/${payload.id}`,
+    url: `https://drive.google.com/uc?export=download&id=${payload.id}`,
+    previewUrl: `https://drive.google.com/uc?export=download&id=${payload.id}`,
     viewUrl: payload.webViewLink,
+    mimeType: file.type || "",
+    size: file.size || 0,
   };
 }
 
@@ -576,6 +581,8 @@ async function readBootstrapState(bootstrap: DriveBootstrap) {
         featureId,
         meta,
         cases: feature.cases,
+        devCases: feature.devCases,
+        defects: feature.defects,
         rounds: feature.rounds,
         fileId: file.id,
       });
@@ -603,6 +610,8 @@ function validateFeatureBody(value: unknown) {
     featureId,
     meta,
     cases: Array.isArray(payload.cases) ? payload.cases : [],
+    devCases: Array.isArray(payload.devCases) ? payload.devCases : [],
+    defects: Array.isArray(payload.defects) ? payload.defects : [],
     rounds: Array.isArray(payload.rounds) ? payload.rounds : [],
     fileId: payload.fileId || "",
   };
@@ -618,12 +627,16 @@ async function upsertFeatureFile(body: unknown) {
     fileId = (await createJsonFile(fileName, bootstrap.featuresFolderId, {
       meta: payload.meta,
       cases: payload.cases,
+      devCases: payload.devCases,
+      defects: payload.defects,
       rounds: payload.rounds,
     })).id;
   } else {
     await writeJsonFile(fileId, {
       meta: payload.meta,
       cases: payload.cases,
+      devCases: payload.devCases,
+      defects: payload.defects,
       rounds: payload.rounds,
     });
   }
@@ -640,17 +653,10 @@ async function upsertStatusFile(body: unknown) {
 
 async function listCaseIdsFromFeatureFile(fileId: string) {
   const payload = sanitizeFeaturePayload(await readJsonFile(fileId));
-  const mainIds = (payload.cases || [])
+  const ids = (payload.cases || [])
     .map((row) => (isPlainObject(row) && typeof row.id === "string" ? row.id.trim() : ""))
     .filter(Boolean);
-  const roundIds: string[] = [];
-  (payload.rounds || []).forEach((round) => {
-    if (!isPlainObject(round) || !Array.isArray(round.cases)) return;
-    round.cases.forEach((row) => {
-      if (isPlainObject(row) && typeof row.id === "string" && row.id.trim()) roundIds.push(row.id.trim());
-    });
-  });
-  return [...new Set([...mainIds, ...roundIds])];
+  return [...new Set(ids)];
 }
 
 async function deleteImageFoldersForCases(caseIds: string[], imagesFolderId: string) {
@@ -685,22 +691,22 @@ async function deleteFeature(featureId: string, fileId = "") {
   return { ok: true, deleted: true, deletedImageFolders };
 }
 
-async function uploadImages(req: Request) {
+async function uploadFilesToFolder(req: Request) {
   const bootstrap = await ensureBootstrap();
   const form = await req.formData();
-  const caseId = String(form.get("caseId") || "").trim();
-  if (!caseId) throw new Error("caseId is required");
+  const folderKey = String(form.get("folderKey") || form.get("caseId") || "").trim();
+  if (!folderKey) throw new Error("folderKey is required");
 
-  const caseFolderId = await ensureFolder(caseId, bootstrap.imagesFolderId);
+  const caseFolderId = await ensureFolder(folderKey, bootstrap.imagesFolderId);
   const files = form.getAll("files").filter((entry): entry is File => entry instanceof File);
   if (!files.length) throw new Error("No files uploaded");
 
-  const images = [];
+  const uploadedFiles = [];
   for (const file of files) {
-    images.push(await uploadImageFile(file, caseFolderId));
+    uploadedFiles.push(await uploadAttachmentFile(file, caseFolderId));
   }
 
-  return { ok: true, images };
+  return { ok: true, files: uploadedFiles, images: uploadedFiles };
 }
 
 async function requireSupabaseUser(req: Request) {
@@ -915,8 +921,8 @@ Deno.serve(async (req) => {
       return jsonResponse(await upsertStatusFile(await req.json()));
     }
 
-    if (req.method === "POST" && action === "image-upload") {
-      return jsonResponse(await uploadImages(req));
+    if (req.method === "POST" && (action === "image-upload" || action === "attachment-upload")) {
+      return jsonResponse(await uploadFilesToFolder(req));
     }
 
     if (req.method === "DELETE" && action === "feature-delete") {

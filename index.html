@@ -1,34 +1,121 @@
 <!DOCTYPE html>
-<html>
+<html lang="th">
 <head>
-<meta charset="UTF-8">
-<title>QA Tool v15</title>
-<style>
-body{font-family:sans-serif;background:#0f172a;color:white}
-.round-header{display:flex;gap:10px;align-items:center;margin-bottom:12px}
-.summary-cards{display:flex;gap:12px;margin-bottom:16px;transition:all 0.3s ease}
-.card{background:#1e293b;padding:12px;border-radius:10px;width:120px;text-align:center}
-.num{font-size:22px;font-weight:bold}
-.pass{color:#22c55e}
-.fail{color:#ef4444}
-.pending{color:#facc15}
-.rate{color:#60a5fa}
-.fade{opacity:0;transform:translateY(10px)}
-.badge{margin-left:10px;font-weight:bold}
-</style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QA Test Cases</title>
+<link rel="icon" type="image/png" href="favicon.png" />
+<link rel="apple-touch-icon" href="favicon.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 </head>
 <body>
 
-<div class="round-header">
-<select id="roundSelect" onchange="changeRound()"></select>
-<button onclick="exportHTML()">Export HTML</button>
-<button onclick="exportPNG()">Export PNG</button>
-<button onclick="exportPDF()">Export PDF</button>
-<span id="badge" class="badge"></span>
+<!-- ── LOGIN OVERLAY ── -->
+<div id="login-overlay" class="login-overlay">
+  <div class="login-box">
+    <div class="logo-dot" style="margin:0 auto 12px;">QA</div>
+    <h2 style="text-align:center;margin-bottom:4px;font-size:18px;">QA Test Cases</h2>
+    
+
+    <!-- Step 1: Supabase login -->
+    <div id="step-login">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Email</label>
+        <input type="email" id="auth-email" class="form-input" placeholder="you@example.com"
+          onkeydown="if(event.key==='Enter')handleLogin()" />
+      </div>
+      <div class="form-group" style="margin-bottom:20px;">
+        <label>Password</label>
+        <input type="password" id="auth-password" class="form-input" placeholder="••••••••"
+          onkeydown="if(event.key==='Enter')handleLogin()" />
+      </div>
+      <button class="btn-modal-ok" id="btn-login" style="width:100%;padding:10px;" onclick="handleLogin()">เข้าสู่ระบบ</button>
+      <div id="login-error" class="form-error" style="margin-top:12px;display:none;"></div>
+    </div>
+  </div>
 </div>
 
-<div id="summary"></div>
+<!-- ── DRIVE ERROR BANNER ── -->
+<div id="drive-expired-banner" class="drive-expired-banner" style="display:none;">
+  <span>⚠️ Google Drive เชื่อมต่อไม่ได้ กำลังลองใหม่...</span>
+  <button onclick="retryDriveConnect()">ลองใหม่</button>
+</div>
 
-<script src="app.js"></script>
+<!-- ── SAVING INDICATOR ── -->
+<div id="saving-indicator" class="saving-indicator" style="display:none;">
+  <div class="spin-dot"></div> กำลังบันทึก...
+</div>
+
+<!-- ── HEADER ── -->
+<header class="site-header">
+  <div class="header-inner">
+    <div class="header-left">
+      <button class="header-hamburger" type="button" onclick="toggleProjectSidebar()" title="Toggle projects sidebar">☰</button>
+      <div class="logo-dot">QA</div>
+      <span class="site-title">QA Test Cases</span>
+      
+    </div>
+    <div class="header-right">
+      <div class="header-status-strip" id="hdr-status-strip"></div>
+      <div class="header-actions">
+        <span id="drive-status-badge" class="drive-badge" title="เชื่อมต่อ Google Drive แล้ว" style="display:none;">📁 Drive</span>
+        <div class="settings-menu-wrap">
+          <button
+            class="btn-reset btn-settings"
+            id="settings-menu-btn"
+            type="button"
+            onclick="toggleSettingsMenu(event)"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-controls="settings-menu-list"
+            title="เมนูตั้งค่า"
+          >⚙️</button>
+          <div class="settings-menu" id="settings-menu-list" role="menu" aria-labelledby="settings-menu-btn" hidden>
+            <button class="settings-menu-item btn-theme" type="button" role="menuitem" id="theme-toggle-btn" onclick="handleSettingsAction(toggleTheme)">🌙 Dark</button>
+            <button class="settings-menu-item" type="button" role="menuitem" onclick="handleSettingsAction(openDriveDiagnostics)">Drive Debug</button>
+            <button class="settings-menu-item btn-logout" type="button" role="menuitem" onclick="handleSettingsAction(handleLogout)">Logout</button>
+            <button class="settings-menu-item" type="button" role="menuitem" onclick="handleSettingsAction(resetAllStatus)">↺ Reset</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+<div id="project-sidebar-backdrop" class="project-sidebar-backdrop" hidden onclick="closeProjectSidebar()"></div>
+<aside id="project-sidebar-drawer" class="project-sidebar-drawer" aria-hidden="true">
+  <div class="project-drawer-inner">
+    <div class="project-drawer-head">
+      <div class="project-drawer-title">Projects</div>
+      <button class="project-drawer-close" type="button" onclick="closeProjectSidebar()" aria-label="Close projects sidebar">✕</button>
+    </div>
+    <button class="projects-add-btn project-drawer-add" onclick="openProjectCreateModal()">＋ <span>Project</span></button>
+    <div id="project-drawer-list" class="projects-list project-drawer-list"></div>
+  </div>
+</aside>
+
+<!-- ── NAV TABS ── -->
+<nav class="nav-tabs-wrap">
+  <div class="nav-tabs" id="nav-tabs"></div>
+</nav>
+
+<!-- ── MAIN ── -->
+<main class="main">
+  <div id="main-content"></div>
+</main>
+
+<footer class="site-footer">
+  QA Test Cases &nbsp;·&nbsp;
+  <span id="footer-year"></span>
+</footer>
+
+<script src="data/xray-planogram.js"></script>
+<script src="data/auth.js"></script>
+<script src="js/app.js"></script>
+<script>document.getElementById('footer-year').textContent = new Date().getFullYear();</script>
 </body>
 </html>
