@@ -2636,27 +2636,52 @@ function isCaseStarred(caseItem) {
 
 async function toggleCaseStar(featureId, caseId) {
   if (!ensureWritable()) return;
+
   const coll = getCaseCollection(featureId);
   const c = coll.cases.find(item => item.id === caseId);
   if (!c) return;
-  c.starred = !c.starred;
 
-  try {
-    await writeFeatureFile(featureId);
-  } catch (err) {
-    console.error(err);
-    alert('บันทึกดาวไม่สำเร็จ: ' + buildErrorMessage(err));
-    return;
-  }
+  const previousValue = !!c.starred;
+
+  // Optimistic update: show star immediately, save in background.
+  c.starred = !previousValue;
+  c._savingStar = true;
 
   FEATURES = buildFeatures();
-  const feature = FEATURES.find(f => f.meta.id === featureId);
+  let feature = FEATURES.find(f => f.meta.id === featureId);
   if (feature) {
     renderFeature(feature);
     requestAnimationFrame(() => {
       const row = document.getElementById(`row-${caseId}`);
       if (row) row.classList.add('star-flash');
     });
+  }
+
+  try {
+    await writeFeatureFile(featureId);
+
+    // clear transient saving flag after save succeeds
+    const latest = getCaseCollection(featureId).cases.find(item => item.id === caseId);
+    if (latest) delete latest._savingStar;
+
+    FEATURES = buildFeatures();
+    feature = FEATURES.find(f => f.meta.id === featureId);
+    if (feature) renderFeature(feature);
+  } catch (err) {
+    console.error(err);
+
+    // Revert if save fails.
+    const latest = getCaseCollection(featureId).cases.find(item => item.id === caseId);
+    if (latest) {
+      latest.starred = previousValue;
+      delete latest._savingStar;
+    }
+
+    FEATURES = buildFeatures();
+    feature = FEATURES.find(f => f.meta.id === featureId);
+    if (feature) renderFeature(feature);
+
+    alert('บันทึกดาวไม่สำเร็จ: ' + buildErrorMessage(err));
   }
 }
 
@@ -2703,7 +2728,7 @@ function renderTable(list,feature){
     const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
     <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
-      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case">${isCaseStarred(c) ? '★' : '☆'}</button></td>
+      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case">${c._savingStar ? '⏳' : (isCaseStarred(c) ? '★' : '☆')}</button></td>
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
       <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge} ${attachmentBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>

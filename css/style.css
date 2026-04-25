@@ -1516,3 +1516,9 @@ body.project-sidebar-open{overflow:hidden;}
   0% { background: rgba(245,158,11,.26); }
   100% { background: transparent; }
 }
+
+
+.star-btn:disabled,
+.star-btn.saving {
+  opacity: .7;
+}
