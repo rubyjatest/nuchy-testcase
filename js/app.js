@@ -1612,7 +1612,7 @@ function buildRoundSummaryHtml(featureId) {
     const status = getStatus(c.id);
     const screenId = c.screen_id || c.screen || '-';
     const screenName = c.screen_name || meta.screens?.[c.screen]?.name || '-';
-    return `<tr><td>${escapeHtml(screenId)}</td><td>${escapeHtml(screenName)}</td><td>${escapeHtml(c.id)}</td><td>${escapeHtml(c.title)}</td><td>${escapeHtml(getStatusLabel(status))}</td></tr>`;
+    return `<tr><td>${isCaseStarred(c) ? '★' : ''}</td><td>${escapeHtml(screenId)}</td><td>${escapeHtml(screenName)}</td><td>${escapeHtml(c.id)}</td><td>${escapeHtml(c.title)}</td><td>${escapeHtml(getStatusLabel(status))}</td></tr>`;
   }).join('');
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>QA Summary</title>
   <style>body{font-family:Arial,sans-serif;background:#f8fafc;color:#0f172a;padding:24px}.wrap{max-width:1080px;margin:auto;background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:24px}.meta{color:#64748b;line-height:1.7}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:18px 0}.card{background:#f1f5f9;border-radius:12px;padding:14px;text-align:center}.num{font-size:26px;font-weight:800}.pass{color:#16a34a}.fail{color:#dc2626}.pending{color:#ca8a04}.rate{color:#2563eb}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left}th{background:#e2e8f0}.badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#e2e8f0;margin-top:8px}</style></head><body><div class="wrap">
@@ -1626,7 +1626,7 @@ function buildRoundSummaryHtml(featureId) {
       <div class="card pending"><div class="num">${s.pending}</div><div>Pending</div></div>
       <div class="card rate"><div class="num">${s.rate}%</div><div>Pass Rate</div></div>
     </div>
-    <h2>Test Case Status</h2><table><thead><tr><th>Screen ID</th><th>Screen</th><th>Case ID</th><th>Title</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
+    <h2>Test Case Status</h2><table><thead><tr><th>Starred</th><th>Screen ID</th><th>Screen</th><th>Case ID</th><th>Title</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>
   </div></body></html>`;
 }
 
@@ -2131,6 +2131,7 @@ function renderQaCasesPanel(feature, screenOptionHtml){
     <div class="list-toolbar list-toolbar-single">
       <div class="list-toolbar-item list-toolbar-actions">
         <button class="icon-btn icon-btn-neutral" onclick="toggleFilterPanel()">⚙️ Filter</button>
+        <button class="icon-btn icon-btn-neutral star-filter-btn${activeStarredOnly ? ' active' : ''}" onclick="toggleStarredFilter()">★ Starred only</button>
       </div>
     </div>
     <div class="filter-panel" id="filter-panel" hidden>
@@ -2165,7 +2166,7 @@ function renderQaCasesPanel(feature, screenOptionHtml){
     <div class="section-sep"><span>Test cases — ${meta.name}</span><span class="count-pill" id="showing-count">— / ${cases.length}</span></div>
     <table class="tc-table">
       <thead><tr>
-        <th class="col-id">ID</th><th class="col-screen hide-sm">Screen</th>
+        <th class="col-star">★</th><th class="col-id">ID</th><th class="col-screen hide-sm">Screen</th>
         <th class="col-title">Test case</th><th class="col-type hide-sm">Type</th>
         <th class="col-status">Status</th><th class="col-actions"></th>
       </tr></thead>
@@ -2621,6 +2622,43 @@ function updateFilterSummary(filteredCount,totalCount){
 }
 
 
+
+function isCaseStarred(caseItem) {
+  return !!caseItem?.starred;
+}
+
+async function toggleCaseStar(featureId, caseId) {
+  if (!ensureWritable()) return;
+  const coll = getCaseCollection(featureId);
+  const c = coll.cases.find(item => item.id === caseId);
+  if (!c) return;
+  c.starred = !c.starred;
+
+  try {
+    await writeFeatureFile(featureId);
+  } catch (err) {
+    console.error(err);
+    alert('บันทึกดาวไม่สำเร็จ: ' + buildErrorMessage(err));
+    return;
+  }
+
+  FEATURES = buildFeatures();
+  const feature = FEATURES.find(f => f.meta.id === featureId);
+  if (feature) {
+    renderFeature(feature);
+    requestAnimationFrame(() => {
+      const row = document.getElementById(`row-${caseId}`);
+      if (row) row.classList.add('star-flash');
+    });
+  }
+}
+
+function toggleStarredFilter() {
+  activeStarredOnly = !activeStarredOnly;
+  applyFilters();
+}
+
+
 function applyFilters(){
   const f=FEATURES.find(f=>f.meta.id===currentFeatureId);if(!f)return;
   const q=(document.getElementById('search-input')?.value||'').toLowerCase();
@@ -2628,8 +2666,9 @@ function applyFilters(){
     const typeOk=activeType==='all'||c.type===activeType;
     const screenOk=activeScreen==='all'||c.screen===activeScreen;
     const stOk=activeStatusFilt==='all'||getStatus(c.id)===activeStatusFilt;
+    const starOk=!activeStarredOnly||isCaseStarred(c);
     const srchOk=!q||[c.title,c.sub,c.id,...(c.steps||[]),...(c.expect||[])].some(s=>s&&String(s).toLowerCase().includes(q));
-    return typeOk&&screenOk&&stOk&&srchOk;
+    return typeOk&&screenOk&&stOk&&starOk&&srchOk;
   });
   updateFilterSummary(filtered.length, f.cases.length);
   renderTable(filtered,f);
@@ -2657,6 +2696,7 @@ function renderTable(list,feature){
     const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
     <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
+      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case">${isCaseStarred(c) ? '★' : '☆'}</button></td>
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
       <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge} ${attachmentBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>
@@ -2671,7 +2711,7 @@ function renderTable(list,feature){
       </td>
     </tr>
     <tr class="detail-row" id="detail-${c.id}">
-      <td colspan="6" style="padding:0 0 8px 0;">
+      <td colspan="7" style="padding:0 0 8px 0;">
         <div class="detail-inner">
           <div><div class="detail-section-title">Steps to reproduce</div>
             <ol class="detail-list steps-list">${(c.steps||[]).map((s,i)=>`<li><strong style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text3);margin-right:5px;">${i+1}.</strong>${s}</li>`).join('')}</ol>

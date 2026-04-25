@@ -1489,3 +1489,30 @@ body.project-sidebar-open{overflow:hidden;}
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+
+.col-star { width: 44px; text-align: center; }
+.star-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text3, #94a3b8);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 999px;
+  width: 32px;
+  height: 32px;
+  transition: transform .14s ease, color .14s ease, background .14s ease;
+}
+.star-btn:hover { transform: scale(1.12); background: rgba(250, 204, 21, .12); color: #f59e0b; }
+.star-btn.active { color: #f59e0b; text-shadow: 0 0 10px rgba(245, 158, 11, .28); }
+.star-filter-btn.active {
+  color: #92400e;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, .16);
+}
+.star-flash { animation: starFlash .55s ease; }
+@keyframes starFlash {
+  0% { background: rgba(245,158,11,.26); }
+  100% { background: transparent; }
+}
