@@ -2655,9 +2655,12 @@ async function toggleCaseStar(featureId, caseId) {
       const starBtn = row?.querySelector('.star-btn');
       if (row) row.classList.add('star-flash');
       if (starBtn) {
-        starBtn.classList.remove('star-pop');
-        void starBtn.offsetWidth;
-        starBtn.classList.add('star-pop');
+        const svg = starBtn.querySelector('.star-svg');
+        if (svg) {
+          svg.classList.remove('star-pop');
+          void svg.offsetWidth;
+          svg.classList.add('star-pop');
+        }
       }
     });
   }
@@ -2722,7 +2725,9 @@ function renderTable(list,feature){
     const imgBadge=imgCount>0?`<span class="img-badge" onclick="event.stopPropagation();openImageViewer('${c.id}','${feature.meta.id}')">🖼 ${imgCount}</span>`:'';
     return`
     <tr class="tc-row" id="row-${c.id}" onclick="toggleDetail('${c.id}')">
-      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case">${isCaseStarred(c) ? '★' : '☆'}</button></td>
+      <td class="col-star"><button class="star-btn ${isCaseStarred(c) ? 'active' : ''}" onclick="event.stopPropagation();toggleCaseStar('${feature.meta.id}','${c.id}')" title="Star case"><svg viewBox="0 0 24 24" class="star-svg ${isCaseStarred(c) ? 'active' : ''}" aria-hidden="true">
+          <path d="M12 3.8c.42 0 .82.24 1.02.62l2.25 4.56 5.04.73c.43.06.79.36.93.77.14.41.03.86-.28 1.16l-3.65 3.55.86 5.02c.08.43-.1.86-.45 1.11-.35.26-.81.29-1.2.09L12 19.04l-4.51 2.37c-.39.2-.85.17-1.2-.09-.35-.25-.53-.68-.45-1.11l.86-5.02-3.65-3.55c-.31-.3-.42-.75-.28-1.16.14-.41.5-.71.93-.77l5.04-.73 2.25-4.56c.19-.38.59-.62 1.01-.62z"/>
+        </svg></button></td>
       <td class="col-id"><span class="tc-id">${c.id}</span></td>
       <td class="col-screen hide-sm">${screenTag}</td>
       <td class="col-title"><div class="tc-title-text">${c.title} ${imgBadge} ${attachmentBadge}</div><div class="tc-sub-text">${c.sub||''}</div></td>
