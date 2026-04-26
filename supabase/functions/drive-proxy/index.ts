@@ -509,6 +509,7 @@ async function uploadAttachmentFile(file: File, caseFolderId: string) {
     new Blob([
       JSON.stringify({
         name: file.name,
+        mimeType: file.type || undefined,
         parents: [caseFolderId],
       }),
     ], { type: "application/json" }),
@@ -535,8 +536,10 @@ async function uploadAttachmentFile(file: File, caseFolderId: string) {
     id: payload.id,
     name: payload.name,
     url: `https://drive.google.com/uc?export=download&id=${payload.id}`,
-    previewUrl: `https://drive.google.com/uc?export=download&id=${payload.id}`,
+    previewUrl: `https://drive.google.com/file/d/${payload.id}/preview`,
+    embedUrl: `https://drive.google.com/file/d/${payload.id}/preview`,
     viewUrl: payload.webViewLink,
+    downloadUrl: payload.webContentLink || `https://drive.google.com/uc?export=download&id=${payload.id}`,
     mimeType: file.type || "",
     size: file.size || 0,
   };

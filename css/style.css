@@ -1627,3 +1627,12 @@ body.project-sidebar-open{overflow:hidden;}
   48% { transform: scale(1.28) rotate(-6deg); filter: drop-shadow(0 0 12px rgba(250, 204, 21, .56)); }
   100% { transform: scale(1) rotate(0deg); }
 }
+
+
+.attachment-video iframe {
+  width: min(420px, 100%);
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 12px;
+  background: #0f172a;
+}

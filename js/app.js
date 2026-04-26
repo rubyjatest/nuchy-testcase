@@ -2276,8 +2276,8 @@ function renderDefectCard(featureId, item, idx, qaCases){
         <div class="form-group"><label>Fix Summary</label><textarea class="form-textarea" onchange="updateDefectField('${featureId}','${defect.id}','fixSummary',this.value)">${escapeHtml(defect.fixSummary || '')}</textarea></div>
       </div>
       <div class="workspace-grid workspace-grid-2">
-        <div class="form-group"><label>Upload attachment</label><div class="attachment-upload-row"><label class="btn-modal-ok workspace-upload-btn">Upload file / video<input type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" style="display:none" onchange="uploadDefectAttachments(event,'${featureId}','${defect.id}')"></label><div class="workspace-help-text">รองรับรูปภาพและวิดีโอ .mp4 .mov .webm</div></div></div>
-        <div class="form-group"><label>Add comment</label><div class="comment-entry"><textarea class="form-textarea" id="comment-input-${defect.id}" placeholder="ใส่ comment เพิ่มเติม"></textarea><label class="btn-modal-secondary workspace-upload-btn comment-upload-btn">แนบไฟล์/วิดีโอ<input id="comment-files-${defect.id}" type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" style="display:none"></label><button class="btn-modal-ok" type="button" onclick="addDefectComment('${featureId}','${defect.id}')">Add comment</button></div></div>
+        <div class="form-group"><label>Upload attachment</label><div class="attachment-upload-row"><label class="btn-modal-ok workspace-upload-btn">Upload file / video<input type="file" multiple accept="image/*,video/*,.mp4,.mov,.webm,.m4v" style="display:none" onchange="uploadDefectAttachments(event,'${featureId}','${defect.id}')"></label><div class="workspace-help-text">รองรับรูปภาพและวิดีโอ .mp4 .mov .webm</div></div></div>
+        <div class="form-group"><label>Add comment</label><div class="comment-entry"><textarea class="form-textarea" id="comment-input-${defect.id}" placeholder="ใส่ comment เพิ่มเติม"></textarea><label class="btn-modal-secondary workspace-upload-btn comment-upload-btn">แนบไฟล์/วิดีโอ<input id="comment-files-${defect.id}" type="file" multiple accept="image/*,video/*,.mp4,.mov,.webm,.m4v" style="display:none"></label><button class="btn-modal-ok" type="button" onclick="addDefectComment('${featureId}','${defect.id}')">Add comment</button></div></div>
       </div>
       <div class="workspace-meta-row workspace-meta-row-stacked">
         <div class="workspace-meta-block"><span class="workspace-meta-label">Attachments</span>
@@ -2307,7 +2307,10 @@ function renderAttachmentPreview(att){
   const viewUrl = escapeHtml(att.viewUrl || att.url || '#');
   const name = escapeHtml(att.name || 'Attachment');
   const kind = getAttachmentKind(att);
-  if (kind === 'video') return `<div class="attachment-preview attachment-video"><video controls preload="metadata" src="${url}"></video><a href="${viewUrl}" target="_blank">${name}</a></div>`;
+  if (kind === 'video') {
+    const embedUrl = escapeHtml(att.embedUrl || (att.id ? `https://drive.google.com/file/d/${att.id}/preview` : '') || att.previewUrl || att.viewUrl || '#');
+    return `<div class="attachment-preview attachment-video"><iframe src="${embedUrl}" allow="autoplay; fullscreen" allowfullscreen loading="lazy"></iframe><a href="${viewUrl}" target="_blank">🎬 ${name}</a></div>`;
+  }
   if (kind === 'image') return `<div class="attachment-preview attachment-image"><a href="${viewUrl}" target="_blank"><img src="${url}" alt="${name}"></a><a href="${viewUrl}" target="_blank">${name}</a></div>`;
   return `<div class="attachment-preview attachment-file"><a href="${viewUrl}" target="_blank">📎 ${name}</a></div>`;
 }
@@ -2323,13 +2326,17 @@ function renderDefectComments(comments){
 }
 
 function normalizeUploadedAttachment(file){
+  const mimeType = file.mimeType || file.type || '';
+  const isVideo = String(mimeType).toLowerCase().startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(String(file.name || ''));
+  const drivePreviewUrl = file.id ? `https://drive.google.com/file/d/${file.id}/preview` : '';
   return {
     id: file.id,
     name: file.name,
     url: file.url,
-    previewUrl: file.previewUrl || file.url,
+    previewUrl: isVideo ? (file.embedUrl || drivePreviewUrl || file.previewUrl || file.url) : (file.previewUrl || file.url),
+    embedUrl: file.embedUrl || (isVideo ? drivePreviewUrl : ''),
     viewUrl: file.viewUrl || file.url,
-    mimeType: file.mimeType || file.type || '',
+    mimeType,
     size: file.size || 0,
     uploadedAt: new Date().toISOString(),
     uploadedBy: getCurrentActor(),
@@ -2779,7 +2786,7 @@ function renderTable(list,feature){
           ${renderCaseAttachmentGallery(c.attachments || [], c.id, feature.meta.id)}
           <div style="grid-column:1/-1;">
             <label class="btn-add-img" title="แนบรูปหรือวิดีโอ">
-              <input type="file" accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" multiple style="display:none" onchange="uploadCaseAttachments(event,'${c.id}','${feature.meta.id}')">
+              <input type="file" accept="image/*,video/*,.mp4,.mov,.webm,.m4v" multiple style="display:none" onchange="uploadCaseAttachments(event,'${c.id}','${feature.meta.id}')">
               📎 แนบรูป / วิดีโอ
             </label>
           </div>
@@ -2945,6 +2952,12 @@ function openImageViewer(caseId, featureId, startIndex = 0) {
     document.body.appendChild(overlay);
   }
 
+  // Remove any previous keyboard handler before creating a new one.
+  if (window.__qaImageViewerKeyHandler) {
+    document.removeEventListener('keydown', window.__qaImageViewerKeyHandler);
+    window.__qaImageViewerKeyHandler = null;
+  }
+
   function render() {
     overlay.innerHTML = `
       <div class="img-viewer-box">
@@ -2969,20 +2982,45 @@ function openImageViewer(caseId, featureId, startIndex = 0) {
     overlay.style.display = 'flex';
   }
 
-  window.imgViewerNav = (d) => { cur = Math.max(0, Math.min(imgs.length-1, cur+d)); render(); };
-  window.imgViewerGoTo = (i) => { cur = i; render(); };
-  window.closeImageViewer = () => { overlay.style.display = 'none'; };
+  window.imgViewerNav = (d) => {
+    const next = Math.max(0, Math.min(imgs.length - 1, cur + d));
+    if (next === cur) return;
+    cur = next;
+    render();
+  };
+  window.imgViewerGoTo = (i) => {
+    const next = Math.max(0, Math.min(imgs.length - 1, Number(i) || 0));
+    if (next === cur) return;
+    cur = next;
+    render();
+  };
+  window.closeImageViewer = () => {
+    overlay.style.display = 'none';
+    if (window.__qaImageViewerKeyHandler) {
+      document.removeEventListener('keydown', window.__qaImageViewerKeyHandler);
+      window.__qaImageViewerKeyHandler = null;
+    }
+  };
 
   render();
 
-  // Keyboard nav
-  overlay._keyHandler = (e) => {
-    if (e.key === 'ArrowRight') imgViewerNav(1);
-    if (e.key === 'ArrowLeft')  imgViewerNav(-1);
-    if (e.key === 'Escape')     closeImageViewer();
+  // Keyboard nav: one handler only, ignore held-key repeats.
+  window.__qaImageViewerKeyHandler = (e) => {
+    if (overlay.style.display === 'none') return;
+    if (e.repeat) return;
+
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      imgViewerNav(1);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      imgViewerNav(-1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeImageViewer();
+    }
   };
-  document.removeEventListener('keydown', overlay._keyHandler);
-  document.addEventListener('keydown', overlay._keyHandler);
+  document.addEventListener('keydown', window.__qaImageViewerKeyHandler);
 }
 
 // ══════════════════════════════════════════
@@ -3338,7 +3376,7 @@ function getCaseModalAttachmentHtml(){
       <label>Attachments <span class="form-hint">รองรับรูปภาพและวิดีโอ .mp4 .mov .webm</span></label>
       <div class="attachment-upload-row">
         <label class="btn-modal-secondary workspace-upload-btn">แนบรูป / วิดีโอ
-          <input type="file" multiple accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" style="display:none" onchange="uploadCaseModalAttachments(event)">
+          <input type="file" multiple accept="image/*,video/*,.mp4,.mov,.webm,.m4v" style="display:none" onchange="uploadCaseModalAttachments(event)">
         </label>
       </div>
       <div id="case-modal-attachments">${gallery}</div>
